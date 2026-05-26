@@ -1,0 +1,46 @@
+# NUNCA enviar — a Discloud roda npm install sozinha
+node_modules
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+
+# Segredos e ambiente local
+.env
+.env.*
+!.env.example
+
+# Git / IDE / Cursor
+.git
+.gitignore
+.vscode
+.cursor
+.idea
+terminals
+agent-transcripts
+assets
+
+# Documentação e extras
+*.md
+!README.md
+DEPLOY*.md
+
+# Banco local / migrations manuais (schema.prisma basta)
+prisma/migrations
+prisma/*.db
+prisma/dev.db
+src/database/schema.sql
+prisma/schema.sql
+
+# Dev only
+coverage
+.cache
+dist
+*.zip
+deploy-discloud.zip
+deploy-temp
+
+# Scripts só para PC local
+src/scripts/registerCommands.js
+
+# Sharding opcional (free usa 1 processo)
+src/sharder.js
