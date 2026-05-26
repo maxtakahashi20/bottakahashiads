@@ -11,7 +11,7 @@ class GuildSettingsService {
   async ensure(guildId) {
     return this.client.prisma.guildSettings.upsert({
       where: { guildId },
-      create: { guildId, adsEnabled: false, allowedCategories: [] },
+      create: { guildId, adsEnabled: true, allowedCategories: [] },
       update: {}
     });
   }

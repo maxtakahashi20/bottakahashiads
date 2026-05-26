@@ -311,8 +311,22 @@ module.exports = {
           .setColor(BRAND.color)
           .setAuthor({ name: 'Prévia do seu anúncio' });
 
+        const botTotal = client.services.partnerships.getBotGuildCount();
+        const targetNames = safeTargets
+          .map((t) => t.guildName || 'Servidor')
+          .slice(0, 8)
+          .join(', ');
+
+        let statusMsg = `✅ Anúncio enfileirado! DMs serão enviadas aos membros de **${safeTargets.length}** servidor(es) parceiro(s).`;
+        if (targetNames) statusMsg += `\n📡 **Destinos:** ${targetNames}`;
+        statusMsg += `\n🤖 Bot está em **${botTotal}** servidor(es) (o servidor atual não recebe o próprio anúncio).`;
+        if (safeTargets.length === 0 && botTotal > 1) {
+          statusMsg +=
+            '\n⚠️ Nenhum parceiro ativo. Peça aos outros servidores: `/setup-ads` → **Ativar rede**.';
+        }
+
         await interaction.editReply({
-          content: `✅ Anúncio enfileirado! Será enviado por **DM** aos membros de **${safeTargets.length}** servidor(es) parceiro(s).`,
+          content: statusMsg,
           embeds: [preview]
         });
 

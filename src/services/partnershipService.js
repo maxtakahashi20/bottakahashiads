@@ -7,17 +7,29 @@ class PartnershipService {
   }
 
   /**
-   * Servidores ativos na rede (anúncios vão por DM aos membros de cada um).
+   * Parceiros = servidores onde o bot está (exceto quem está anunciando).
+   * Servidor com /setup-ads → Desativar rede não recebe mais.
    */
   async listNetworkTargets({ excludeGuildId } = {}) {
-    const rows = await this.client.prisma.guildSettings.findMany({
-      where: {
-        adsEnabled: true,
-        guildId: excludeGuildId ? { not: excludeGuildId } : undefined
-      },
-      select: { guildId: true }
-    });
-    return rows;
+    const targets = [];
+
+    for (const guild of this.client.guilds.cache.values()) {
+      if (excludeGuildId && guild.id === excludeGuildId) continue;
+
+      const settings = await this.client.services.guildSettings.get(guild.id);
+      if (settings?.adsEnabled === false) continue;
+
+      targets.push({
+        guildId: guild.id,
+        guildName: guild.name
+      });
+    }
+
+    return targets;
+  }
+
+  getBotGuildCount() {
+    return this.client.guilds.cache.size;
   }
 }
 
