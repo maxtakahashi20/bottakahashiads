@@ -1,10 +1,30 @@
 const { z } = require('zod');
-const { AdCategory } = require('@prisma/client');
 const { LIMITS, SECURITY } = require('../config/constants');
-
-const VALID_CATEGORIES = Object.values(AdCategory);
+const { parseCategory, categoryHint } = require('../utils/categoryParser');
 
 const urlRegex = /https?:\/\/[^\s]+/gi;
+
+function zodMessagePt(issue) {
+  const field = issue.path?.[0];
+  const code = issue.code;
+
+  if (field === 'title') {
+    if (code === 'too_small') return 'Título muito curto (mínimo 3 caracteres).';
+    if (code === 'too_big') return `Título muito longo (máximo ${LIMITS.titleMax} caracteres).`;
+  }
+  if (field === 'description') {
+    if (code === 'too_small') return 'Descrição muito curta (mínimo 10 caracteres).';
+    if (code === 'too_big') return `Descrição muito longa (máximo ${LIMITS.descriptionMax} caracteres).`;
+  }
+  if (field === 'inviteUrl') {
+    return 'Link de convite inválido. Use um link começando com https://';
+  }
+  if (field === 'bannerUrl') {
+    return 'URL do banner inválida. Deixe vazio ou use https://...';
+  }
+
+  return 'Verifique os campos do formulário e tente novamente.';
+}
 
 class AntiSpamService {
   /**
@@ -15,37 +35,64 @@ class AntiSpamService {
   }
 
   sanitizeText(s) {
-    const str = String(s || '').replace(/\s+/g, ' ').trim();
-    return str;
+    return String(s || '').replace(/\s+/g, ' ').trim();
   }
 
   validateAndNormalizeAdInput(raw) {
+    const category = parseCategory(raw.category);
+    if (!category) {
+      return {
+        ok: false,
+        error: `Categoria inválida. Digite apenas uma, por exemplo: **FIVEM**, **LOJA**, **ROLEPLAY**, **GAMING**.\nOpções: ${categoryHint()}`
+      };
+    }
+
+    const bannerRaw = String(raw.bannerUrl || '').trim();
+
     const schema = z.object({
       title: z.string().min(3).max(LIMITS.titleMax),
       description: z.string().min(10).max(LIMITS.descriptionMax),
-      bannerUrl: z.string().url().max(LIMITS.bannerUrlMax).optional().or(z.literal('')),
-      inviteUrl: z.string().url().max(LIMITS.inviteUrlMax),
-      category: z.string().min(2).max(30)
+      inviteUrl: z.string().min(10).max(LIMITS.inviteUrlMax)
     });
 
-    const parsed = schema.safeParse(raw);
+    const parsed = schema.safeParse({
+      title: raw.title,
+      description: raw.description,
+      inviteUrl: raw.inviteUrl
+    });
+
     if (!parsed.success) {
-      const msg = parsed.error.issues[0]?.message || 'Entrada inválida.';
+      const msg = zodMessagePt(parsed.error.issues[0]);
       return { ok: false, error: msg };
     }
 
-    const data = parsed.data;
-    const title = this.sanitizeText(data.title);
-    const description = this.sanitizeText(data.description);
-    const inviteUrl = this.sanitizeText(data.inviteUrl);
-    const bannerUrl = data.bannerUrl ? this.sanitizeText(data.bannerUrl) : null;
-    const category = this.sanitizeText(data.category).toUpperCase().replace(/\s+/g, '_');
+    const title = this.sanitizeText(parsed.data.title);
+    const description = this.sanitizeText(parsed.data.description);
+    let inviteUrl = this.sanitizeText(parsed.data.inviteUrl);
 
-    if (!VALID_CATEGORIES.includes(category)) {
-      return {
-        ok: false,
-        error: `Categoria inválida. Use: ${VALID_CATEGORIES.join(', ')}`
-      };
+    if (!/^https?:\/\//i.test(inviteUrl)) {
+      inviteUrl = `https://${inviteUrl}`;
+    }
+
+    try {
+      // eslint-disable-next-line no-new
+      new URL(inviteUrl);
+    } catch {
+      return { ok: false, error: 'Link de convite inválido. Ex: https://discord.gg/seuconvite' };
+    }
+
+    let bannerUrl = null;
+    if (bannerRaw) {
+      if (!/^https?:\/\//i.test(bannerRaw)) {
+        return { ok: false, error: 'URL do banner inválida. Use https://... ou deixe em branco.' };
+      }
+      try {
+        // eslint-disable-next-line no-new
+        new URL(bannerRaw);
+        bannerUrl = this.sanitizeText(bannerRaw);
+      } catch {
+        return { ok: false, error: 'URL do banner inválida.' };
+      }
     }
 
     const joined = `${title}\n${description}\n${inviteUrl}\n${bannerUrl || ''}`.toLowerCase();
@@ -72,7 +119,6 @@ class AntiSpamService {
   async checkCooldown({ guildId, userId, userCooldownSec, guildCooldownSec }) {
     const now = Date.now();
 
-    // cache rápido antes de ir ao banco
     const ucKey = `user:${userId}`;
     const gcKey = `guild:${guildId}`;
 
@@ -99,7 +145,6 @@ class AntiSpamService {
       }
     }
 
-    // set novos cooldowns
     const userExp = new Date(now + userCooldownSec * 1000);
     const guildExp = new Date(now + guildCooldownSec * 1000);
 
@@ -122,4 +167,3 @@ class AntiSpamService {
 }
 
 module.exports = { AntiSpamService };
-

@@ -39,17 +39,19 @@ function buildAnnounceModal() {
 
   const inviteUrl = new TextInputBuilder()
     .setCustomId('inviteUrl')
-    .setLabel('Link de convite (https://discord.gg/...)')
+    .setLabel('Link de convite')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
     .setPlaceholder('https://discord.gg/seuconvite');
 
   const category = new TextInputBuilder()
     .setCustomId('category')
-    .setLabel('Categoria (FIVEM, ROLEPLAY, GAMING...)')
+    .setLabel('Categoria')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
-    .setPlaceholder('FIVEM');
+    .setMinLength(2)
+    .setMaxLength(40)
+    .setPlaceholder('FIVEM, LOJA, RP, GAMING...');
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(title),
