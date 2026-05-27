@@ -57,7 +57,7 @@ class ResetService {
       ok: true,
       message:
         removed > 0
-          ? `**${removed}** token(s) removido(s). Adicione um novo em `/painel` → **Tokens**.`
+          ? `**${removed}** token(s) removido(s). Adicione um novo em \`/painel\` → **Tokens**.`
           : 'Nenhum token estava salvo. Você já pode cadastrar um novo token.',
       stats: { tokens: removed }
     };
