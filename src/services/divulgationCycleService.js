@@ -15,6 +15,7 @@ class DivulgationCycleService {
     this.tenantId = tenantId;
     this.timer = null;
     this.runningCycle = false;
+    this._queuedImmediate = null; // { guildIds, opts, at }
     this.delivery = new ChannelDeliveryService(client, tenantId);
     this.tenantConfig = new TenantConfigService();
     this.divRuns = new DivulgationRunService(tenantId);
@@ -81,6 +82,11 @@ class DivulgationCycleService {
 
   async _executeDelivery(targets, cfg, { immediate = false } = {}) {
     if (this.runningCycle) {
+      // Se for envio manual, enfileira para rodar assim que o ciclo atual terminar.
+      if (immediate) {
+        this._queuedImmediate = { targets, cfg, at: Date.now() };
+        return { ok: true, queued: true, sent: 0, errors: 0, reason: 'Envio enfileirado — aguardando ciclo atual.' };
+      }
       return { ok: false, sent: 0, errors: 0, reason: 'Ciclo em andamento, tente em instantes.' };
     }
 
@@ -155,6 +161,14 @@ class DivulgationCycleService {
       };
     } finally {
       this.runningCycle = false;
+      // Roda envio manual enfileirado (uma vez) logo após liberar o ciclo.
+      const queued = this._queuedImmediate;
+      this._queuedImmediate = null;
+      if (queued?.targets?.length && queued?.cfg) {
+        this._executeDelivery(queued.targets, queued.cfg, { immediate: true }).catch((err) =>
+          this.client.logger.error({ err, tenantId: this.tenantId }, 'Queued immediate send failed')
+        );
+      }
     }
   }
 

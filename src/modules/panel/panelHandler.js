@@ -648,7 +648,9 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
       client.services.userTokens?.getLastError() ||
       'Nenhuma mensagem enviada.';
     const msg =
-      send?.sent > 0
+      send?.queued
+        ? `⏳ **Envio enfileirado**: o ciclo atual está em andamento. Vou enviar assim que terminar.`
+        : send?.sent > 0
         ? `🚀 **${send.sent}** mensagem(ns) enviada(s)! Próximos envios no intervalo configurado.`
         : `⚠️ **Falha:** ${detail}`;
     await ephemeralFollowUp(interaction, { content: msg });
