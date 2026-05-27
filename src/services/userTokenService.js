@@ -7,6 +7,15 @@ const {
 } = require('../modules/tokens/userTokenApi');
 const { maskSecret } = require('../modules/panel/panelFormat');
 const { isMissingTableError } = require('../utils/prismaSafe');
+const { PLATFORM_TENANT_ID } = require('../config/licensing');
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isPermissionError(result) {
+  return result.status === 403 || result.code === 50001 || /sem permissão|50001|falta acesso/i.test(result.error || '');
+}
 
 class UserTokenService {
   /**
@@ -18,6 +27,10 @@ class UserTokenService {
     this._cache = { list: null, at: 0 };
     this._cacheMs = 4000;
     this._lastSendError = null;
+    /** @type {Map<string, number>} tokenId -> timestamp ms até poder usar de novo */
+    this._rateLimitedUntil = new Map();
+    /** @type {Map<string, { reason: string, until: number }>} channelId -> bloqueio temporário */
+    this._blockedChannels = new Map();
   }
 
   getLastError() {
@@ -25,7 +38,7 @@ class UserTokenService {
   }
 
   _invalidate() {
-    this._cache = { list: null, at: 0 };
+    this._cache = { list: null, at: 0, tenantId: null };
   }
 
   async _safe(op, fallback) {
@@ -40,20 +53,21 @@ class UserTokenService {
     }
   }
 
-  async listActive() {
+  async listActive(tenantId = PLATFORM_TENANT_ID) {
+    const cacheKey = tenantId;
     const now = Date.now();
-    if (this._cache.list && now - this._cache.at < this._cacheMs) {
+    if (this._cache.tenantId === cacheKey && this._cache.list && now - this._cache.at < this._cacheMs) {
       return this._cache.list;
     }
     const list = await this._safe(
       () =>
         prisma.userToken.findMany({
-          where: { active: true },
+          where: { active: true, tenantId },
           orderBy: { slot: 'asc' }
         }),
       []
     );
-    this._cache = { list, at: now };
+    this._cache = { list, at: now, tenantId: cacheKey };
     return list;
   }
 
@@ -77,10 +91,10 @@ class UserTokenService {
     return row;
   }
 
-  async addToken({ rawToken, ownerId }) {
+  async addToken({ rawToken, ownerId, tenantId = PLATFORM_TENANT_ID }) {
     const profile = await validateUserToken(rawToken);
     try {
-      return await this._addTokenDb({ rawToken, ownerId, profile });
+      return await this._addTokenDb({ rawToken, ownerId, profile, tenantId });
     } catch (err) {
       if (isMissingTableError(err)) {
         throw new Error(
@@ -91,9 +105,9 @@ class UserTokenService {
     }
   }
 
-  async _addTokenDb({ rawToken, ownerId, profile }) {
+  async _addTokenDb({ rawToken, ownerId, profile, tenantId = PLATFORM_TENANT_ID }) {
     const existing = await prisma.userToken.findFirst({
-      where: { discordUserId: profile.id }
+      where: { tenantId, discordUserId: profile.id }
     });
     if (existing) {
       await prisma.userToken.update({
@@ -110,11 +124,15 @@ class UserTokenService {
       return { updated: true, slot: existing.slot, profile };
     }
 
-    const maxSlot = await prisma.userToken.aggregate({ _max: { slot: true } });
+    const maxSlot = await prisma.userToken.aggregate({
+      where: { tenantId },
+      _max: { slot: true }
+    });
     const slot = (maxSlot._max.slot || 0) + 1;
 
     await prisma.userToken.create({
       data: {
+        tenantId,
         slot,
         ownerId,
         discordUserId: profile.id,
@@ -127,9 +145,9 @@ class UserTokenService {
     return { updated: false, slot, profile };
   }
 
-  async removeBySlot(slot) {
+  async removeBySlot(slot, tenantId = PLATFORM_TENANT_ID) {
     const n = Number(slot);
-    const row = await prisma.userToken.findFirst({ where: { slot: n } });
+    const row = await prisma.userToken.findFirst({ where: { tenantId, slot: n } });
     if (!row) return false;
     await prisma.userToken.delete({ where: { id: row.id } });
     this._invalidate();
@@ -149,22 +167,122 @@ class UserTokenService {
     this._invalidate();
   }
 
-  /**
-   * Envia no canal com todos os tokens ativos até um funcionar.
-   */
-  async sendToChannel(channelId, payload) {
+  _isTokenRateLimited(tokenId) {
+    const until = this._rateLimitedUntil.get(tokenId);
+    if (!until) return false;
+    if (Date.now() >= until) {
+      this._rateLimitedUntil.delete(tokenId);
+      return false;
+    }
+    return true;
+  }
+
+  _markTokenRateLimited(tokenId, retryAfterSec) {
+    const waitSec = Math.max(1, Math.ceil(retryAfterSec || 5));
+    this._rateLimitedUntil.set(tokenId, Date.now() + waitSec * 1000);
+    return waitSec;
+  }
+
+  isChannelBlocked(channelId) {
+    const block = this._blockedChannels.get(channelId);
+    if (!block) return null;
+    if (Date.now() >= block.until) {
+      this._blockedChannels.delete(channelId);
+      return null;
+    }
+    return block.reason;
+  }
+
+  _blockChannel(channelId, reason, hours = 6) {
+    this._blockedChannels.set(channelId, {
+      reason,
+      until: Date.now() + hours * 60 * 60 * 1000
+    });
+  }
+
+  async auditActiveTokens() {
     const list = await this.listActive();
     if (!list.length) {
-      this._lastSendError = 'Nenhum token de usuário ativo — cadastre em Tokens';
-      return { ok: false, error: this._lastSendError, via: 'none' };
+      this.client.logger.warn('Nenhum token de usuário ativo — cadastre em /painel → Tokens');
+      return { valid: 0, invalid: 0 };
     }
 
-    let lastError = 'Falha ao enviar';
+    let valid = 0;
+    let invalid = 0;
     for (const row of list) {
       try {
         const token = await this.getDecrypted(row);
         // eslint-disable-next-line no-await-in-loop
-        const result = await sendChannelMessageAsUser(channelId, token, payload);
+        await validateUserToken(token);
+        valid += 1;
+      } catch (err) {
+        invalid += 1;
+        this.client.logger.warn(
+          { slot: row.slot, error: err.message },
+          'Token de usuário inválido — desativado'
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await this.markUsed(row.id, err.message);
+      }
+    }
+    if (invalid > 0) {
+      this.client.logger.warn(
+        { valid, invalid },
+        'Tokens expirados desativados — gere novos em /painel → Tokens'
+      );
+    }
+    return { valid, invalid };
+  }
+
+  async _sendWithToken(channelId, token, payload, row) {
+    let result = await sendChannelMessageAsUser(channelId, token, payload);
+
+    if (!result.ok && result.status === 429 && result.retryAfterSec) {
+      const waitSec = this._markTokenRateLimited(row.id, result.retryAfterSec);
+      this.client.logger.info(
+        { channelId, slot: row.slot, waitSec, code: result.code },
+        'Rate limit — aguardando retry'
+      );
+      await sleep(waitSec * 1000 + 500);
+      result = await sendChannelMessageAsUser(channelId, token, payload);
+    }
+
+    if (!result.ok && result.status === 429) {
+      this._markTokenRateLimited(row.id, result.retryAfterSec || 30);
+    }
+
+    return result;
+  }
+
+  /**
+   * Envia no canal com todos os tokens ativos até um funcionar.
+   */
+  async sendToChannel(channelId, payload, tenantId = PLATFORM_TENANT_ID) {
+    const blocked = this.isChannelBlocked(channelId);
+    if (blocked) {
+      this._lastSendError = blocked;
+      return { ok: false, error: blocked, via: 'blocked', skipped: true };
+    }
+
+    const list = await this.listActive(tenantId);
+    if (!list.length) {
+      this._lastSendError = 'Nenhum token de usuário ativo — cadastre em /painel → Tokens';
+      return { ok: false, error: this._lastSendError, via: 'none' };
+    }
+
+    const available = list.filter((row) => !this._isTokenRateLimited(row.id));
+    const tryList = available.length ? available : list;
+
+    let lastError = 'Falha ao enviar';
+    let permissionFailures = 0;
+
+    for (const row of tryList) {
+      if (this._isTokenRateLimited(row.id)) continue;
+
+      try {
+        const token = await this.getDecrypted(row);
+        // eslint-disable-next-line no-await-in-loop
+        const result = await this._sendWithToken(channelId, token, payload, row);
         if (result.ok) {
           this._lastSendError = null;
           await prisma.userToken.update({
@@ -176,11 +294,17 @@ class UserTokenService {
         }
         lastError = result.error;
         this.client.logger.warn(
-          { channelId, slot: row.slot, error: result.error, status: result.status },
+          { channelId, slot: row.slot, error: result.error, status: result.status, code: result.code },
           'Falha envio user token'
         );
         if (result.status === 401) {
           await this.markUsed(row.id, result.error);
+        } else if (isPermissionError(result)) {
+          permissionFailures += 1;
+          await prisma.userToken.update({
+            where: { id: row.id },
+            data: { lastError: String(result.error).slice(0, 200) }
+          });
         } else {
           await prisma.userToken.update({
             where: { id: row.id },
@@ -191,6 +315,13 @@ class UserTokenService {
         lastError = err.message;
         this.client.logger.error({ err, slot: row.slot }, 'Erro sendToChannel');
       }
+    }
+
+    if (permissionFailures >= tryList.length) {
+      const msg = 'Sem permissão no canal — a conta do token precisa estar no servidor com acesso ao canal';
+      this._blockChannel(channelId, msg);
+      lastError = msg;
+      this.client.logger.warn({ channelId }, 'Canal bloqueado por falta de permissão (6h)');
     }
 
     this._lastSendError = lastError;
@@ -214,8 +345,8 @@ class UserTokenService {
     return { ok: false, error: lastError, via: 'user' };
   }
 
-  async validatePartnerTarget(channelId, guildId) {
-    const list = await this.listActive();
+  async validatePartnerTarget(channelId, guildId, tenantId = PLATFORM_TENANT_ID) {
+    const list = await this.listActive(tenantId);
     if (!list.length) {
       return {
         ok: false,
@@ -234,8 +365,11 @@ class UserTokenService {
     return { ok: false, error: lastErr };
   }
 
-  async listForPanel() {
-    const rows = await this.listAll();
+  async listForPanel(tenantId = PLATFORM_TENANT_ID) {
+    const rows = await this._safe(
+      () => prisma.userToken.findMany({ where: { tenantId }, orderBy: { slot: 'asc' } }),
+      []
+    );
     return rows.map((r) => ({
       slot: r.slot,
       username: r.username,

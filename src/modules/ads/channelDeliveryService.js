@@ -8,18 +8,22 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
+const { PLATFORM_TENANT_ID } = require('../../config/licensing');
+
 class ChannelDeliveryService {
   /**
    * @param {import('../../structures/ExtendedClient').ExtendedClient} client
+   * @param {string} [tenantId]
    */
-  constructor(client) {
+  constructor(client, tenantId = PLATFORM_TENANT_ID) {
     this.client = client;
+    this.tenantId = tenantId;
   }
 
   async postToChannel(channelId, payload) {
     const tokens = this.client.services.userTokens;
     if (tokens) {
-      return tokens.sendToChannel(channelId, payload);
+      return tokens.sendToChannel(channelId, payload, this.tenantId);
     }
 
     const channel = await this.client.channels.fetch(channelId).catch(() => null);
@@ -60,6 +64,7 @@ class ChannelDeliveryService {
 
       for (let m = 0; m < messagesPerServer; m++) {
         const result = await this.postToChannel(t.channelId, payload);
+        if (result.skipped) continue;
         if (result.ok) {
           sent++;
           if (onSuccess) await onSuccess(t, result);

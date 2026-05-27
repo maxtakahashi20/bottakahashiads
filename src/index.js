@@ -16,6 +16,15 @@ const { AdQueueService } = require('./modules/ads/adQueueService');
 const { NetworkService } = require('./services/networkService');
 const { DivulgationCycleService } = require('./services/divulgationCycleService');
 const { UserTokenService } = require('./services/userTokenService');
+const { AuditService } = require('./services/auditService');
+const { TenantService } = require('./services/tenantService');
+const { LicenseService } = require('./services/licenseService');
+const { SubscriptionService } = require('./services/subscriptionService');
+const { TenantConfigService } = require('./services/tenantConfigService');
+const { ExpirationService } = require('./services/expirationService');
+const { TenantCycleManager } = require('./services/tenantCycleManager');
+const { RenewalService } = require('./modules/payments/renewalService');
+const { PLATFORM_TENANT_ID } = require('./config/licensing');
 const { createInviteRouter } = require('./api/inviteRoutes');
 
 const { logger } = require('./utils/logger');
@@ -62,8 +71,16 @@ async function main() {
   client.services.adsQueue = new AdQueueService(client);
   client.services.network = new NetworkService(client);
   client.services.status = new StatusService(client);
-  client.services.divulgationCycle = new DivulgationCycleService(client);
+  client.services.audit = new AuditService(client);
+  client.services.tenants = new TenantService(client);
+  client.services.licenses = new LicenseService(client);
+  client.services.subscriptions = new SubscriptionService(client);
+  client.services.tenantConfig = new TenantConfigService();
+  client.services.expiration = new ExpirationService(client);
+  client.services.renewals = new RenewalService(client);
+  client.services.tenantCycles = new TenantCycleManager(client);
   client.services.userTokens = new UserTokenService(client);
+  client.services.divulgationCycle = new DivulgationCycleService(client, PLATFORM_TENANT_ID);
   client.panelStatsCache = { data: null, at: 0 };
 
   loadCommands(client);

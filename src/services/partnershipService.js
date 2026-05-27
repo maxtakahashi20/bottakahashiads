@@ -1,4 +1,5 @@
 const { DIVULGATION } = require('../config/constants');
+const { PLATFORM_TENANT_ID } = require('../config/licensing');
 
 class PartnershipService {
   /**
@@ -10,10 +11,12 @@ class PartnershipService {
 
   /**
    * Todos os parceiros com canal configurado (bot pode não estar no servidor).
+   * @param {{ excludeGuildId?: string, tenantId?: string }} opts
    */
-  async listNetworkTargets({ excludeGuildId } = {}) {
+  async listNetworkTargets({ excludeGuildId, tenantId = PLATFORM_TENANT_ID } = {}) {
     const rows = await this.client.prisma.guildSettings.findMany({
       where: {
+        tenantId,
         adsChannelId: { not: null },
         adsEnabled: { not: false }
       }
@@ -34,9 +37,10 @@ class PartnershipService {
     return targets;
   }
 
-  async countConfigured() {
+  async countConfigured(tenantId = PLATFORM_TENANT_ID) {
     return this.client.prisma.guildSettings.count({
       where: {
+        tenantId,
         adsChannelId: { not: null },
         adsEnabled: { not: false }
       }

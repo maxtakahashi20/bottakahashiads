@@ -13,6 +13,8 @@ const { safeReply, deferEphemeral, deferComponent } = require('../utils/interact
 const { isNetworkAdmin } = require('../utils/permissions');
 const { buildRedePanel } = require('../modules/network/redePanel');
 const { handlePanelInteraction, handlePanelModal, isPanelInteraction } = require('../modules/panel/panelHandler');
+const { handleTenantPanelButton } = require('../modules/tenants/tenantPanelHandler');
+const { handleAdminAccessButton } = require('../modules/licenses/adminPanelHandler');
 const { nextSendDate } = require('../utils/divulgationLimits');
 
 function formatRetry(ms) {
@@ -35,6 +37,11 @@ module.exports = {
         if (!cmd) return;
         await cmd.execute(client, interaction);
         return;
+      }
+
+      if (interaction.isButton()) {
+        if (await handleTenantPanelButton(client, interaction)) return;
+        if (await handleAdminAccessButton(client, interaction)) return;
       }
 
       if (

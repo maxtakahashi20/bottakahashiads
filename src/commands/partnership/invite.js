@@ -6,7 +6,7 @@ const {
   buildDiscordBotInviteUrl,
   buildBrandedInviteUrl
 } = require('../../utils/inviteBuilder');
-const { deferEphemeral } = require('../../utils/interaction');
+const { deferEphemeral, EPHEMERAL } = require('../../utils/interaction');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -35,7 +35,7 @@ module.exports = {
     if (!isNetworkAdmin(interaction)) {
       await interaction.reply({
         content: 'Você não tem permissão para gerar convites de parceria.',
-        ephemeral: true
+        flags: EPHEMERAL
       });
       return;
     }

@@ -10,7 +10,8 @@ datasource db {
 
 model GuildSettings {
   id                String        @id @default(cuid())
-  guildId           String        @unique
+  tenantId          String        @default("platform")
+  guildId           String
   adsEnabled        Boolean       @default(true)
   adsChannelId      String?
   partnerGuildName  String?
@@ -22,20 +23,25 @@ model GuildSettings {
   allowedCategories AdCategory[]  @default([])
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @default(now()) @updatedAt
+  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   partnershipsAsA   Partnership[] @relation("GuildA")
   partnershipsAsB   Partnership[] @relation("GuildB")
+
+  @@unique([tenantId, guildId])
+  @@index([tenantId])
 }
 
 model Partnership {
   id        String        @id @default(cuid())
+  tenantId  String        @default("platform")
   guildAId  String
   guildBId  String
   active    Boolean       @default(true)
   createdAt DateTime      @default(now())
-  guildA    GuildSettings @relation("GuildA", fields: [guildAId], references: [guildId], onDelete: Cascade, onUpdate: NoAction)
-  guildB    GuildSettings @relation("GuildB", fields: [guildBId], references: [guildId], onDelete: Cascade, onUpdate: NoAction)
+  guildA    GuildSettings @relation("GuildA", fields: [tenantId, guildAId], references: [tenantId, guildId], onDelete: Cascade, onUpdate: NoAction)
+  guildB    GuildSettings @relation("GuildB", fields: [tenantId, guildBId], references: [tenantId, guildId], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([guildAId, guildBId], map: "Partnership_unique_pair")
+  @@unique([tenantId, guildAId, guildBId], map: "Partnership_unique_pair")
   @@index([active])
   @@index([guildAId])
   @@index([guildBId])
@@ -43,6 +49,7 @@ model Partnership {
 
 model Advertisement {
   id          String       @id @default(cuid())
+  tenantId    String       @default("platform")
   guildId     String
   userId      String
   title       String
@@ -55,7 +62,9 @@ model Advertisement {
   failedCount Int          @default(0)
   createdAt   DateTime     @default(now())
   deliveries  AdDelivery[]
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId, guildId, createdAt(sort: Desc)])
   @@index([guildId, createdAt(sort: Desc)])
   @@index([category, createdAt(sort: Desc)])
   @@index([userId])
@@ -78,34 +87,40 @@ model AdDelivery {
 
 model Cooldown {
   id        String   @id @default(cuid())
+  tenantId  String   @default("platform")
   scope     String
   key       String
   expiresAt DateTime
   updatedAt DateTime @default(now()) @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([scope, key], map: "Cooldown_unique_scope_key")
+  @@unique([tenantId, scope, key], map: "Cooldown_unique_tenant_scope_key")
   @@index([expiresAt])
   @@index([scope, key])
 }
 
 model Analytics {
   id              String   @id @default(cuid())
+  tenantId        String   @unique @default("platform")
   totalAds        Int      @default(0)
   totalDeliveries Int      @default(0)
   totalFailures   Int      @default(0)
   connectedGuilds Int      @default(0)
   networkEnabled  Boolean  @default(true)
   updatedAt       DateTime @default(now()) @updatedAt
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 model Blacklist {
   id        String   @id @default(cuid())
+  tenantId  String   @default("platform")
   type      String
   targetId  String
   reason    String?
   createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([type, targetId], map: "Blacklist_unique_type_target")
+  @@unique([tenantId, type, targetId], map: "Blacklist_unique_tenant_type_target")
   @@index([type])
   @@index([targetId])
 }
@@ -159,6 +174,7 @@ model SystemConfig {
 
 model DivulgationRun {
   id              String    @id @default(cuid())
+  tenantId        String    @default("platform")
   number          Int       @default(0)
   status          String    @default("running")
   startedAt       DateTime  @default(now())
@@ -167,12 +183,15 @@ model DivulgationRun {
   cyclesDone      Int       @default(0)
   errorsCount     Int       @default(0)
   advertisementId String?
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId, status, startedAt(sort: Desc)])
   @@index([status, startedAt(sort: Desc)])
 }
 
 model UserToken {
   id             String    @id @default(cuid())
+  tenantId       String    @default("platform")
   slot           Int
   ownerId        String
   discordUserId  String
@@ -183,10 +202,112 @@ model UserToken {
   lastUsedAt     DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([slot])
+  @@unique([tenantId, slot])
+  @@index([tenantId, active])
   @@index([active])
   @@index([ownerId])
+}
+
+// ---------------------------------------------------------------------------
+// SaaS — Licenças, tenants e assinaturas
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id            String         @id @default(cuid())
+  ownerUserId   String         @unique
+  displayName   String?
+  status        TenantStatus   @default(ACTIVE)
+  isPlatform    Boolean        @default(false)
+  notifyExpiry  Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  licenses      License[]
+  subscriptions Subscription[]
+  settings      TenantSettings?
+  guildSettings GuildSettings[]
+  userTokens    UserToken[]
+  advertisements Advertisement[]
+  analytics     Analytics?
+  blacklists    Blacklist[]
+  cooldowns     Cooldown[]
+  divulgationRuns DivulgationRun[]
+  auditLogs     AuditLog[]
+}
+
+model License {
+  id                String          @id @default(cuid())
+  code              String          @unique
+  duration          LicenseDuration
+  status            LicenseStatus   @default(PENDING)
+  createdByUserId   String
+  activatedByUserId String?
+  tenantId          String?
+  activatedAt       DateTime?
+  revokedAt         DateTime?
+  revokedByUserId   String?
+  note              String?
+  createdAt         DateTime        @default(now())
+  tenant            Tenant?         @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  subscriptions     Subscription[]
+
+  @@index([status])
+  @@index([tenantId])
+  @@index([createdByUserId])
+}
+
+model Subscription {
+  id        String             @id @default(cuid())
+  tenantId  String
+  licenseId String
+  startsAt  DateTime
+  endsAt    DateTime
+  status    SubscriptionStatus @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  license   License            @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@index([endsAt])
+  @@index([licenseId])
+}
+
+model TenantSettings {
+  id               String   @id @default(cuid())
+  tenantId         String   @unique
+  botRunning       Boolean  @default(true)
+  globalMessage    String?
+  globalBannerUrl  String?
+  globalInviteUrl  String?
+  messagesPerCycle Int      @default(1)
+  delayMsgMinSec   Float    @default(2)
+  delayMsgMaxSec   Float    @default(5)
+  delayGuildMinSec Float    @default(15)
+  delayGuildMaxSec Float    @default(35)
+  minCycleMinutes  Float    @default(50)
+  totalCycles      Int      @default(0)
+  scheduledAt      DateTime?
+  lastSendAt       DateTime?
+  networkEnabled   Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  actorId   String?
+  action    String
+  target    String?
+  message   String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([actorId])
 }
 
 model Cart {
@@ -384,4 +505,29 @@ enum TicketType {
   SUPPORT
   PURCHASE
   BUDGET
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+}
+
+enum LicenseStatus {
+  PENDING
+  ACTIVATED
+  EXPIRED
+  REVOKED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum LicenseDuration {
+  MONTH_1
+  MONTH_3
+  YEAR_1
 }

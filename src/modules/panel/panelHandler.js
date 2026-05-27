@@ -24,7 +24,7 @@ const {
 const { SystemConfigService } = require('../../services/systemConfigService');
 const { DivulgationRunService } = require('../../services/divulgationRunService');
 const { isNetworkAdmin, isTokenOwner } = require('../../utils/permissions');
-const { deferComponent, deferEphemeral } = require('../../utils/interaction');
+const { deferComponent, deferEphemeral, EPHEMERAL, ephemeralFollowUp } = require('../../utils/interaction');
 const { fmtDate } = require('./panelFormat');
 const { DIVULGATION } = require('../../config/constants');
 const { clampDelayMinutes, nextSendDate } = require('../../utils/divulgationLimits');
@@ -51,7 +51,7 @@ async function requireAdmin(interaction) {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(payload);
     } else {
-      await interaction.reply({ ...payload, ephemeral: true });
+      await interaction.reply({ ...payload, flags: EPHEMERAL });
     }
     return false;
   }
@@ -62,7 +62,7 @@ async function requireTokenOwner(interaction) {
   if (!isTokenOwner(interaction)) {
     await interaction.reply({
       content: '❌ Só o dono da rede (`BOT_OWNER_IDS`) pode gerenciar tokens de usuário.',
-      ephemeral: true
+      flags: EPHEMERAL
     });
     return false;
   }
@@ -357,9 +357,8 @@ async function handlePanelInteraction(client, interaction) {
   if (id === PANEL.SERVER_SEND_NOW) {
     const cfg = await systemConfig.get();
     if (!cfg.botRunning) {
-      await interaction.followUp({
-        content: '⚠️ Ligue o bot no painel (**Iniciar Bot**) ou envie após configurar um servidor.',
-        ephemeral: true
+      await ephemeralFollowUp(interaction, {
+        content: '⚠️ Ligue o bot no painel (**Iniciar Bot**) ou envie após configurar um servidor.'
       });
       return true;
     }
@@ -373,7 +372,7 @@ async function handlePanelInteraction(client, interaction) {
       send?.sent > 0
         ? `🚀 **${send.sent}** mensagem(ns) enviada(s)! Próximos envios no intervalo configurado.`
         : `⚠️ **Falha:** ${detail}`;
-    await interaction.followUp({ content: msg, ephemeral: true });
+    await ephemeralFollowUp(interaction, { content: msg });
     const rows = await getPartnerServerRows(client, { force: true });
     const payload = buildServersPanel(client, rows);
     setViewCache(client, 'servers', payload);
@@ -580,7 +579,7 @@ async function handlePanelModal(client, interaction) {
     if (!Number.isFinite(delayMin) || delayMin < DIVULGATION.minIntervalMinutes) {
       await interaction.reply({
         content: `❌ Delay mínimo é **${DIVULGATION.minIntervalMinutes}** minutos (divulgação de 50 em 50 min).`,
-        ephemeral: true
+        flags: EPHEMERAL
       });
       return true;
     }
@@ -646,7 +645,7 @@ async function handlePanelModal(client, interaction) {
       nextSendAt: null
     });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Canal de divulgação removido.', ephemeral: true });
+    await interaction.reply({ content: '✅ Canal de divulgação removido.', flags: EPHEMERAL });
     return true;
   }
 
@@ -655,7 +654,7 @@ async function handlePanelModal(client, interaction) {
     const customMsg = interaction.fields.getTextInputValue('customMsg')?.trim() || null;
     await client.services.guildSettings.update(guildId, { customMessage: customMsg });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Mensagem do servidor atualizada.', ephemeral: true });
+    await interaction.reply({ content: '✅ Mensagem do servidor atualizada.', flags: EPHEMERAL });
     return true;
   }
 
@@ -663,19 +662,19 @@ async function handlePanelModal(client, interaction) {
     const message = interaction.fields.getTextInputValue('message');
     await systemConfig.update({ globalMessage: message });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Mensagem global salva.', ephemeral: true });
+    await interaction.reply({ content: '✅ Mensagem global salva.', flags: EPHEMERAL });
     return true;
   }
 
   if (id === MODAL.SCHEDULE) {
     const dt = parseScheduleDate(interaction.fields.getTextInputValue('datetime'));
     if (!dt || dt.getTime() <= Date.now()) {
-      await interaction.reply({ content: '❌ Data/hora inválida ou no passado.', ephemeral: true });
+      await interaction.reply({ content: '❌ Data/hora inválida ou no passado.', flags: EPHEMERAL });
       return true;
     }
     await systemConfig.update({ scheduledAt: dt });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: `✅ Agendado para ${fmtDate(dt)}`, ephemeral: true });
+    await interaction.reply({ content: `✅ Agendado para ${fmtDate(dt)}`, flags: EPHEMERAL });
     return true;
   }
 
@@ -702,7 +701,7 @@ async function handlePanelModal(client, interaction) {
     if (Number.isFinite(rawMin) && rawMin < DIVULGATION.minIntervalMinutes) {
       cycleMsg += ` Intervalo mínimo: **${DIVULGATION.minIntervalMinutes}** min (50 em 50).`;
     }
-    await interaction.reply({ content: cycleMsg, ephemeral: true });
+    await interaction.reply({ content: cycleMsg, flags: EPHEMERAL });
     return true;
   }
 
@@ -710,11 +709,11 @@ async function handlePanelModal(client, interaction) {
     const num = Number(interaction.fields.getTextInputValue('number'));
     const run = await divRuns.getByNumber(num);
     if (!run) {
-      await interaction.reply({ content: '❌ Divulgação não encontrada.', ephemeral: true });
+      await interaction.reply({ content: '❌ Divulgação não encontrada.', flags: EPHEMERAL });
       return true;
     }
     const payload = buildDivulgationDetail(run, run.status === 'running');
-    await interaction.reply({ ...payload, ephemeral: true });
+    await interaction.reply({ ...payload, flags: EPHEMERAL });
     return true;
   }
 

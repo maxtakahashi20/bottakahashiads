@@ -1,21 +1,28 @@
 const { prisma } = require('../database/prisma');
+const { PLATFORM_TENANT_ID } = require('../config/licensing');
 
 class DivulgationRunService {
+  constructor(tenantId = PLATFORM_TENANT_ID) {
+    this.tenantId = tenantId;
+  }
+
   async getCurrent() {
     return prisma.divulgationRun.findFirst({
-      where: { status: 'running' },
+      where: { tenantId: this.tenantId, status: 'running' },
       orderBy: { startedAt: 'desc' }
     });
   }
 
   async start(advertisementId = null) {
     const last = await prisma.divulgationRun.findFirst({
+      where: { tenantId: this.tenantId },
       orderBy: { number: 'desc' },
       select: { number: true }
     });
     const number = (last?.number || 0) + 1;
     return prisma.divulgationRun.create({
       data: {
+        tenantId: this.tenantId,
         number,
         status: 'running',
         advertisementId
@@ -45,6 +52,7 @@ class DivulgationRunService {
 
   async listRecent(limit = 10) {
     return prisma.divulgationRun.findMany({
+      where: { tenantId: this.tenantId },
       orderBy: { startedAt: 'desc' },
       take: limit
     });
@@ -52,12 +60,14 @@ class DivulgationRunService {
 
   async clearHistory() {
     await prisma.divulgationRun.deleteMany({
-      where: { status: { not: 'running' } }
+      where: { tenantId: this.tenantId, status: { not: 'running' } }
     });
   }
 
   async getByNumber(num) {
-    return prisma.divulgationRun.findFirst({ where: { number: num } });
+    return prisma.divulgationRun.findFirst({
+      where: { tenantId: this.tenantId, number: num }
+    });
   }
 }
 

@@ -24,7 +24,17 @@ async function discordUserFetch(path, userToken, options = {}) {
   } catch {
     data = { raw: text };
   }
-  return { ok: res.ok, status: res.status, data };
+
+  const headerRetry = Number(res.headers.get('retry-after'));
+  const bodyRetry = Number(data?.retry_after);
+  const retryAfterSec =
+    Number.isFinite(bodyRetry) && bodyRetry > 0
+      ? bodyRetry
+      : Number.isFinite(headerRetry) && headerRetry > 0
+        ? headerRetry
+        : null;
+
+  return { ok: res.ok, status: res.status, data, retryAfterSec };
 }
 
 function formatApiError(status, data) {
@@ -76,13 +86,20 @@ function payloadToApiBody(payload) {
  */
 async function sendChannelMessageAsUser(channelId, userToken, payload) {
   const body = payloadToApiBody(payload);
-  const { ok, status, data } = await discordUserFetch(`/channels/${channelId}/messages`, userToken, {
+  const { ok, status, data, retryAfterSec } = await discordUserFetch(`/channels/${channelId}/messages`, userToken, {
     method: 'POST',
     body: JSON.stringify(body)
   });
 
   if (!ok) {
-    return { ok: false, error: formatApiError(status, data), status, raw: data };
+    return {
+      ok: false,
+      error: formatApiError(status, data),
+      status,
+      code: data?.code,
+      raw: data,
+      retryAfterSec
+    };
   }
   return { ok: true, messageId: data.id };
 }

@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { BRAND } = require('../../config/constants');
 const { buildRedePanel } = require('../../modules/network/redePanel');
-const { deferEphemeral } = require('../../utils/interaction');
+const { deferEphemeral, EPHEMERAL } = require('../../utils/interaction');
 const { isNetworkAdmin } = require('../../utils/permissions');
 
 module.exports = {
@@ -17,7 +17,7 @@ module.exports = {
     if (!isNetworkAdmin(interaction)) {
       await interaction.reply({
         content: 'Sem permissão. Apenas administradores ou donos da rede podem usar este comando.',
-        ephemeral: true
+        flags: EPHEMERAL
       });
       return;
     }

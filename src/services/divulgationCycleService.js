@@ -1,20 +1,23 @@
-const { SystemConfigService } = require('./systemConfigService');
+const { TenantConfigService } = require('./tenantConfigService');
 const { DivulgationRunService } = require('./divulgationRunService');
 const { ChannelDeliveryService } = require('../modules/ads/channelDeliveryService');
 const { buildChannelMessagePayload } = require('../modules/ads/messagePayload');
 const { canSendToGuild, nextSendDate } = require('../utils/divulgationLimits');
+const { PLATFORM_TENANT_ID } = require('../config/licensing');
 
 class DivulgationCycleService {
   /**
    * @param {import('../structures/ExtendedClient').ExtendedClient} client
+   * @param {string} [tenantId]
    */
-  constructor(client) {
+  constructor(client, tenantId = PLATFORM_TENANT_ID) {
     this.client = client;
+    this.tenantId = tenantId;
     this.timer = null;
     this.runningCycle = false;
-    this.delivery = new ChannelDeliveryService(client);
-    this.systemConfig = new SystemConfigService();
-    this.divRuns = new DivulgationRunService();
+    this.delivery = new ChannelDeliveryService(client, tenantId);
+    this.tenantConfig = new TenantConfigService();
+    this.divRuns = new DivulgationRunService(tenantId);
   }
 
   /**
@@ -37,7 +40,7 @@ class DivulgationCycleService {
   }
 
   async _scheduleNext() {
-    const cfg = await this.systemConfig.get();
+    const cfg = await this.tenantConfig.get(this.tenantId);
     if (!cfg.botRunning) return;
 
     const { clampDelayMinutes } = require('../utils/divulgationLimits');
@@ -58,12 +61,14 @@ class DivulgationCycleService {
    * @param {{ skipNetworkCheck?: boolean }} opts
    */
   async sendImmediate(guildIds = null, opts = {}) {
-    if (!opts.skipNetworkCheck && !(await this.client.services.network.isEnabled())) {
-      return { ok: false, sent: 0, errors: 0, reason: 'Rede desligada — use `/rede` para ligar.' };
+    if (!opts.skipNetworkCheck && !(await this._isNetworkEnabled())) {
+      return { ok: false, sent: 0, errors: 0, reason: 'Rede desligada — ative no painel.' };
     }
 
-    const cfg = await this.systemConfig.get();
-    let targets = await this.client.services.partnerships.listNetworkTargets({});
+    const cfg = await this.tenantConfig.get(this.tenantId);
+    let targets = await this.client.services.partnerships.listNetworkTargets({
+      tenantId: this.tenantId
+    });
     if (guildIds?.length) {
       targets = targets.filter((t) => guildIds.includes(t.guildId));
     }
@@ -91,7 +96,7 @@ class DivulgationCycleService {
           toSend.push(t);
           continue;
         }
-        const s = await this.client.services.guildSettings.get(t.guildId);
+        const s = await this.client.services.guildSettings.get(t.guildId, this.tenantId);
         if (canSendToGuild(s)) toSend.push(t);
       }
 
@@ -109,28 +114,33 @@ class DivulgationCycleService {
       const { sent, errors, lastError } = await this.delivery.deliverToTargets(
         toSend,
         async (t) => {
-          const settings = await this.client.services.guildSettings.get(t.guildId);
+          const settings = await this.client.services.guildSettings.get(t.guildId, this.tenantId);
           return this.buildGlobalPayload(cfg, settings);
         },
         {
           delayMsgMin: cfg.delayMsgMinSec,
-          delayMsgMaxSec: cfg.delayMsgMaxSec,
+          delayMsgMax: cfg.delayMsgMaxSec,
           delayGuildMin: cfg.delayGuildMinSec,
-          delayGuildMaxSec: cfg.delayGuildMaxSec,
+          delayGuildMax: cfg.delayGuildMaxSec,
           messagesPerServer: cfg.messagesPerCycle,
           onSuccess: async (t) => {
-            const s = await this.client.services.guildSettings.get(t.guildId);
-            await this.client.services.guildSettings.update(t.guildId, {
-              nextSendAt: nextSendDate(s?.delayMinutes)
-            });
+            const s = await this.client.services.guildSettings.get(t.guildId, this.tenantId);
+            await this.client.services.guildSettings.update(
+              t.guildId,
+              { nextSendAt: nextSendDate(s?.delayMinutes) },
+              this.tenantId
+            );
           }
         }
       );
 
       if (sent > 0) {
         await this.divRuns.bump(run.id, { messages: sent, cycles: 1, errors });
-        await this.systemConfig.incrementCycles(1);
-        await this.systemConfig.touchLastSend();
+        const prev = await this.tenantConfig.get(this.tenantId);
+        await this.tenantConfig.update(this.tenantId, {
+          totalCycles: (prev.totalCycles || 0) + 1,
+          lastSendAt: new Date()
+        });
       }
 
       if (sent === 0 && lastError) {
@@ -148,19 +158,31 @@ class DivulgationCycleService {
     }
   }
 
-  async _runCycle() {
-    if (!(await this.client.services.network.isEnabled())) return;
+  async _isNetworkEnabled() {
+    const cfg = await this.tenantConfig.get(this.tenantId);
+    if (cfg.networkEnabled === false) return false;
+    if (this.tenantId === PLATFORM_TENANT_ID) {
+      return this.client.services.network.isEnabled();
+    }
+    const sub = await this.client.services.subscriptions.getActiveForTenant(this.tenantId);
+    return Boolean(sub);
+  }
 
-    const cfg = await this.systemConfig.get();
+  async _runCycle() {
+    if (!(await this._isNetworkEnabled())) return;
+
+    const cfg = await this.tenantConfig.get(this.tenantId);
     if (!cfg.botRunning) return;
 
     if (cfg.scheduledAt && cfg.scheduledAt.getTime() > Date.now()) return;
 
-    const targets = await this.client.services.partnerships.listNetworkTargets({});
+    const targets = await this.client.services.partnerships.listNetworkTargets({
+      tenantId: this.tenantId
+    });
     const result = await this._executeDelivery(targets, cfg, { immediate: false });
 
     if (cfg.scheduledAt && cfg.scheduledAt.getTime() <= Date.now()) {
-      await this.systemConfig.update({ scheduledAt: null });
+      await this.tenantConfig.update(this.tenantId, { scheduledAt: null });
     }
 
     return result;

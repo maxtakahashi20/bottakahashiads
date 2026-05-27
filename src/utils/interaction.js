@@ -33,4 +33,8 @@ async function deferComponent(interaction) {
   await interaction.deferUpdate();
 }
 
-module.exports = { EPHEMERAL, safeReply, deferEphemeral, deferComponent };
+async function ephemeralFollowUp(interaction, options) {
+  return interaction.followUp({ ...options, flags: (options.flags ?? 0) | EPHEMERAL });
+}
+
+module.exports = { EPHEMERAL, safeReply, deferEphemeral, deferComponent, ephemeralFollowUp };

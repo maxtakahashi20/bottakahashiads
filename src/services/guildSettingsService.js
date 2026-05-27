@@ -1,4 +1,5 @@
 const { AdCategory } = require('@prisma/client');
+const { PLATFORM_TENANT_ID } = require('../config/licensing');
 
 class GuildSettingsService {
   /**
@@ -8,23 +9,40 @@ class GuildSettingsService {
     this.client = client;
   }
 
-  async ensure(guildId) {
+  _key(tenantId, guildId) {
+    return { tenantId_guildId: { tenantId: tenantId || PLATFORM_TENANT_ID, guildId } };
+  }
+
+  async ensure(guildId, tenantId = PLATFORM_TENANT_ID) {
+    const tid = tenantId || PLATFORM_TENANT_ID;
     return this.client.prisma.guildSettings.upsert({
-      where: { guildId },
-      create: { guildId, adsEnabled: true, allowedCategories: [] },
+      where: this._key(tid, guildId),
+      create: { tenantId: tid, guildId, adsEnabled: true, allowedCategories: [] },
       update: {}
     });
   }
 
-  async get(guildId) {
-    return this.client.prisma.guildSettings.findUnique({ where: { guildId } });
+  async get(guildId, tenantId = PLATFORM_TENANT_ID) {
+    return this.client.prisma.guildSettings.findUnique({
+      where: this._key(tenantId, guildId)
+    });
   }
 
-  async update(guildId, patch) {
-    await this.ensure(guildId);
+  async update(guildId, patch, tenantId = PLATFORM_TENANT_ID) {
+    await this.ensure(guildId, tenantId);
     return this.client.prisma.guildSettings.update({
-      where: { guildId },
+      where: this._key(tenantId, guildId),
       data: patch
+    });
+  }
+
+  async countForTenant(tenantId) {
+    return this.client.prisma.guildSettings.count({
+      where: {
+        tenantId,
+        adsChannelId: { not: null },
+        adsEnabled: { not: false }
+      }
     });
   }
 
