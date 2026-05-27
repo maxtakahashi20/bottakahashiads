@@ -15,11 +15,12 @@ module.exports = {
    * @param {import('../../structures/ExtendedClient').ExtendedClient} client
    */
   async execute(client, interaction) {
-    const platformOwner = isPlatformOwner(interaction);
-    await interaction.deferReply({ flags: platformOwner ? 0 : EPHEMERAL });
+    // Sempre ephemeral: painel é privado (ambiente/tenant).
+    await interaction.deferReply({ flags: EPHEMERAL });
 
     const ctx = await resolveTenantContext(client, interaction);
 
+    const platformOwner = isPlatformOwner(interaction);
     if (platformOwner) {
       setPanelTenant(interaction.user.id, PLATFORM_TENANT_ID);
       const view = await renderHome(client, { tenantId: PLATFORM_TENANT_ID });

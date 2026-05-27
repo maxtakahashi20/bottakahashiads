@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
 const { deferEphemeral } = require('../../utils/interaction');
 const { buildAdminAccessHome } = require('../../modules/licenses/adminAccessPanel');
@@ -8,7 +8,10 @@ const { dbErrorMessage } = require('../../utils/prismaSafe');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('painel-acesso')
-    .setDescription('(Dono) Painel administrativo de licenças e assinaturas.'),
+    .setDescription('(Dono) Painel administrativo de licenças e assinaturas.')
+    // Oculta do autocomplete para usuários comuns (ainda validamos BOT_OWNER_IDS em runtime).
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDMPermission(false),
 
   async execute(client, interaction) {
     await deferEphemeral(interaction);

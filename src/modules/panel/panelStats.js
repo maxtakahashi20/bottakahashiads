@@ -37,12 +37,13 @@ async function collectPanelStats(client, { force = false, tenantId } = {}) {
   const tokenSvc = client.services.userTokens;
   const divRuns = new DivulgationRunService(tid);
 
-  const [cfg, currentRun, recentRuns, tokenCount, configuredServers] = await Promise.all([
+  const [cfg, currentRun, recentRuns, tokenCount, configuredServers, tenantServerCount] = await Promise.all([
     isPlatformScope(tid) ? systemConfig.get() : client.services.tenantConfig.get(tid),
     divRuns.getCurrent(),
     divRuns.listRecent(5),
     tokenSvc?.countActive(tid) ?? 0,
-    client.services.partnerships.countConfigured(tid)
+    client.services.partnerships.countConfigured(tid),
+    isPlatformScope(tid) ? null : client.services.guildSettings.countForTenant(tid)
   ]);
 
   let errorsTotal = recentRuns.reduce((a, r) => a + r.errorsCount, 0) + (currentRun?.errorsCount || 0);
@@ -59,7 +60,8 @@ async function collectPanelStats(client, { force = false, tenantId } = {}) {
     cfg,
     currentRun,
     recentRuns,
-    partnerCount: client.guilds.cache.size,
+    // Em tenant SaaS, mostrar apenas servidores do próprio ambiente (isolado).
+    partnerCount: isPlatformScope(tid) ? client.guilds.cache.size : (tenantServerCount ?? 0),
     configuredServers,
     tokenCount,
     totalDivulgations: recentRuns.length ? Math.max(...recentRuns.map((r) => r.number)) : 0,
