@@ -324,13 +324,6 @@ class UserTokenService {
       }
     }
 
-    if (permissionFailures >= tryList.length) {
-      const msg = 'Sem permissão no canal — a conta do token precisa estar no servidor com acesso ao canal';
-      this._blockChannel(channelId, msg);
-      lastError = msg;
-      this.client.logger.warn({ channelId }, 'Canal bloqueado por falta de permissão (6h)');
-    }
-
     this._lastSendError = lastError;
 
     // Se todos falharam por rate limit, informe retry para o delivery respeitar backoff.
@@ -356,6 +349,14 @@ class UserTokenService {
         if (code === 50013) error = 'Unauthorized';
         if (code === 50001) error = 'Falta Acesso';
         this._lastSendError = `${lastError} | Bot: ${error}`;
+        // Só bloqueia o canal se nem o token nem o bot tiverem acesso.
+        if (permissionFailures >= tryList.length && (code === 50013 || code === 50001)) {
+          const msg =
+            'Sem permissão no canal — a conta do token (e o bot) precisam estar no servidor com acesso ao canal';
+          this._blockChannel(channelId, msg);
+          this.client.logger.warn({ channelId }, 'Canal bloqueado por falta de permissão (6h)');
+          return { ok: false, error: msg, via: 'bot' };
+        }
         return { ok: false, error: this._lastSendError, via: 'bot' };
       }
     }
