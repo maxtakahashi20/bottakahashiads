@@ -118,6 +118,190 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
   const effectiveId = overrideCustomId || legacyTracking || interaction.customId;
   const opensModal = interaction.isButton() && MODAL_BUTTONS.has(effectiveId);
 
+  // Botões que abrem modal precisam responder em <3s. Não faça chamadas de DB antes do showModal.
+  if (opensModal && interaction.isButton()) {
+    let modal = null;
+    if (effectiveId === PANEL.TOKEN_ADD) {
+      modal = new ModalBuilder().setCustomId(MODAL.TOKEN_ADD).setTitle('Adicionar Token');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('token')
+            .setLabel('Token da sua conta Discord')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setPlaceholder('Cole o token do usuário aqui...')
+        )
+      );
+    } else if (effectiveId === PANEL.TOKEN_REMOVE) {
+      modal = new ModalBuilder().setCustomId(MODAL.TOKEN_REMOVE).setTitle('Remover Token');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('slot')
+            .setLabel('Número do token (ex: 1)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('1')
+        )
+      );
+    } else if (effectiveId === PANEL.SERVER_ADD) {
+      modal = new ModalBuilder().setCustomId(MODAL.SERVER_ADD).setTitle('Adicionar Servidor');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('guildId')
+            .setLabel('ID do Servidor')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('123456789')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('channelId')
+            .setLabel('ID do Canal')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('987654321')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('delayMin')
+            .setLabel(`Delay em Minutos (mínimo ${DIVULGATION.minIntervalMinutes})`)
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder(String(DIVULGATION.minIntervalMinutes))
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('customMsg')
+            .setLabel('Mensagem Personalizada (opcional)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setPlaceholder('Deixe vazio para usar a mensagem global...')
+        )
+      );
+    } else if (effectiveId === PANEL.SERVER_REMOVE) {
+      modal = new ModalBuilder().setCustomId('tn:painel:modal:server_remove').setTitle('Remover Servidor');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('guildId')
+            .setLabel('ID do Servidor')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+    } else if (effectiveId === PANEL.SERVER_EDIT_MSG) {
+      modal = new ModalBuilder().setCustomId('tn:painel:modal:server_msg').setTitle('Mensagem do Servidor');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('guildId')
+            .setLabel('ID do Servidor')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('customMsg')
+            .setLabel('Mensagem personalizada (vazio = global)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+        )
+      );
+    } else if (effectiveId === PANEL.MSG_EDIT_GLOBAL) {
+      modal = new ModalBuilder().setCustomId(MODAL.MSG_GLOBAL).setTitle('Editar Mensagem Global');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('message')
+            .setLabel('Digite sua mensagem de divulgação')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setPlaceholder('Digite a mensagem...')
+        )
+      );
+    } else if (effectiveId === PANEL.SCHEDULE_CREATE) {
+      modal = new ModalBuilder().setCustomId(MODAL.SCHEDULE).setTitle('Agendar Divulgação');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('datetime')
+            .setLabel('Data e Hora (DD/MM/AAAA HH:MM)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('Ex: 15/02/2026 14:30')
+        )
+      );
+    } else if (effectiveId === PANEL.DIV_SELECT) {
+      modal = new ModalBuilder().setCustomId(MODAL.DIV_NUMBER).setTitle('Ver Divulgação');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('number')
+            .setLabel('Número da divulgação')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('50')
+        )
+      );
+    } else if (effectiveId === PANEL.CYCLES_EDIT) {
+      modal = new ModalBuilder().setCustomId(MODAL.CYCLES).setTitle('Editar Ciclos');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('messagesPerCycle')
+            .setLabel('Mensagens por ciclo')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('1')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('delayMsg')
+            .setLabel('Delay msg min-max (ex: 2-5)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('2-5')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('delayGuild')
+            .setLabel('Delay servidor min-max (ex: 15-35)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('15-35')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('minCycle')
+            .setLabel('Delay mínimo do ciclo (minutos)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder(String(DIVULGATION.minIntervalMinutes))
+        )
+      );
+    } else if (effectiveId === PANEL.TRACKING_ADD) {
+      modal = new ModalBuilder().setCustomId(MODAL.TRACKING_ADD).setTitle('Convite de Tracking');
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('inviteUrl')
+            .setLabel('Link do convite Discord')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('https://discord.gg/...')
+        )
+      );
+    }
+
+    if (modal) {
+      await interaction.showModal(modal);
+      return true;
+    }
+  }
+
   if (!opensModal) await deferComponent(interaction);
 
   const tenantId = await resolvePanelTenant(client, interaction);
