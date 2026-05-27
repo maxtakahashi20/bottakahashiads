@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { renderHome } = require('../../modules/panel/panelHandler');
 const { isNetworkAdmin, isPlatformOwner } = require('../../utils/permissions');
 const { EPHEMERAL } = require('../../utils/interaction');
@@ -8,19 +8,20 @@ const { setPanelTenant, PLATFORM_TENANT_ID } = require('../../modules/panel/pane
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('painel')
-    .setDescription('Painel de controle (seu ambiente SaaS ou rede Takahashi).')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setDescription('Painel do seu ambiente Takahashi Ads (após ativar licença).')
+    .setDMPermission(false),
 
   /**
    * @param {import('../../structures/ExtendedClient').ExtendedClient} client
    */
   async execute(client, interaction) {
+    const platformOwner = isPlatformOwner(interaction);
+    await interaction.deferReply({ flags: platformOwner ? 0 : EPHEMERAL });
+
     const ctx = await resolveTenantContext(client, interaction);
 
-    // Dono da plataforma sempre vê painel completo da rede
-    if (isPlatformOwner(interaction)) {
+    if (platformOwner) {
       setPanelTenant(interaction.user.id, PLATFORM_TENANT_ID);
-      await interaction.deferReply();
       const view = await renderHome(client, { tenantId: PLATFORM_TENANT_ID });
       await interaction.editReply(view);
       return;
@@ -28,7 +29,6 @@ module.exports = {
 
     if (ctx.isActiveClient) {
       setPanelTenant(interaction.user.id, ctx.tenant.id);
-      await interaction.deferReply({ flags: EPHEMERAL });
       const view = await renderHome(client, { tenantId: ctx.tenant.id });
       await interaction.editReply(view);
       return;
@@ -36,15 +36,15 @@ module.exports = {
 
     if (isNetworkAdmin(interaction)) {
       setPanelTenant(interaction.user.id, PLATFORM_TENANT_ID);
-      await interaction.deferReply();
       const view = await renderHome(client, { tenantId: PLATFORM_TENANT_ID });
       await interaction.editReply(view);
       return;
     }
 
-    await interaction.reply({
-      content: '❌ Ative sua licença com `/ativar` ou peça permissão de administrador.',
-      flags: EPHEMERAL
+    await interaction.editReply({
+      content:
+        '❌ Ative sua licença com `/ativar` (filtre pelo bot **Takahashi Ads** nos comandos).\n' +
+        'Administradores da rede usam o mesmo `/painel` após configurar `BOT_OWNER_IDS`.'
     });
   }
 };

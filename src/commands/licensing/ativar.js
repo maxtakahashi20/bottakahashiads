@@ -42,7 +42,7 @@ module.exports = {
           `📦 Plano: **${DURATION_LABELS[result.license.duration]}**`,
           `📅 Válido até: **${fmtDate(result.endsAt)}**`,
           '',
-          'Use `/painel` para configurar servidores e divulgação.',
+          'Use `/painel` (**Takahashi Ads**, não outro bot) para configurar servidores e divulgação.',
           'Use `/status` e `/plano` para acompanhar sua assinatura.'
         ].join('\n')
       });

@@ -115,13 +115,15 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
   if (!isPanelInteraction(interaction) && !overrideCustomId && !legacyTracking) return false;
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return false;
 
-  const tenantId = await resolvePanelTenant(client, interaction);
-  const ctx = new PanelContext(client, tenantId);
   const effectiveId = overrideCustomId || legacyTracking || interaction.customId;
   const opensModal = interaction.isButton() && MODAL_BUTTONS.has(effectiveId);
 
-  if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
   if (!opensModal) await deferComponent(interaction);
+
+  const tenantId = await resolvePanelTenant(client, interaction);
+  const ctx = new PanelContext(client, tenantId);
+
+  if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
 
   try {
   const forceRefresh = interaction.isButton() && effectiveId === PANEL.REFRESH;
