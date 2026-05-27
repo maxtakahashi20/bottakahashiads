@@ -157,6 +157,19 @@ class UserTokenService {
     return true;
   }
 
+  /** Remove todos os tokens do tenant (reset administrativo). */
+  async removeAllForTenant(tenantId = PLATFORM_TENANT_ID) {
+    const r = await this._safe(
+      () => prisma.userToken.deleteMany({ where: { tenantId } }),
+      { count: 0 }
+    );
+    this._invalidate();
+    this._blockedChannels.clear();
+    this._rateLimitedUntil.clear();
+    this._lastSendError = null;
+    return r.count ?? 0;
+  }
+
   async markUsed(id, error = null) {
     const deactivate = error && /token inválido|expirado|401/i.test(String(error));
     await prisma.userToken.update({

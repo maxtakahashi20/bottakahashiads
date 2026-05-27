@@ -15,6 +15,8 @@ const { buildRedePanel } = require('../modules/network/redePanel');
 const { handlePanelInteraction, handlePanelModal, isPanelInteraction } = require('../modules/panel/panelHandler');
 const { handleTenantPanelButton } = require('../modules/tenants/tenantPanelHandler');
 const { handleAdminAccessButton } = require('../modules/licenses/adminPanelHandler');
+const { handleResetInteraction } = require('../modules/reset/resetHandler');
+const { isResetButton } = require('../modules/reset/resetIds');
 const { nextSendDate } = require('../utils/divulgationLimits');
 
 function formatRetry(ms) {
@@ -46,6 +48,9 @@ module.exports = {
       }
 
       if (interaction.isButton()) {
+        if (isResetButton(interaction.customId)) {
+          if (await handleResetInteraction(client, interaction)) return;
+        }
         if (await handleTenantPanelButton(client, interaction)) return;
         if (await handleAdminAccessButton(client, interaction)) return;
       }
