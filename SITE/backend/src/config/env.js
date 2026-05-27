@@ -31,8 +31,8 @@ const env = {
   databaseUrl: required('DATABASE_URL'),
   jwtSecret: process.env.JWT_SECRET || process.env.API_KEY_CHANGE_ME || 'change-me-jwt-secret-min-32-chars!!',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  discordClientId: clientId,
-  discordClientSecret: clientSecret,
+  discordClientId: clientId.trim(),
+  discordClientSecret: clientSecret.trim(),
   discordRedirectUri:
     process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/api/auth/callback',
   webUrl: (process.env.WEB_URL || 'http://localhost:3000').replace(/\/$/, ''),

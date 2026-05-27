@@ -39,7 +39,14 @@ router.get('/callback', async (req, res) => {
 
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
-      return res.redirect(`${env.webUrl}/login?error=oauth_failed`);
+      console.error('Discord OAuth token failed', {
+        status: tokenRes.status,
+        error: tokenData.error,
+        description: tokenData.error_description
+      });
+      const errCode = encodeURIComponent(tokenData.error || 'oauth_failed');
+      const errDesc = encodeURIComponent(tokenData.error_description || '');
+      return res.redirect(`${env.webUrl}/login?error=${errCode}&desc=${errDesc}`);
     }
 
     const userRes = await fetch(`${DISCORD_API}/users/@me`, {
@@ -63,14 +70,18 @@ router.get('/callback', async (req, res) => {
     const refreshHash = hashRefresh(refresh);
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    await prisma.webSession.create({
-      data: {
-        discordId: user.id,
-        tenantId: tenant.id,
-        refreshHash,
-        expiresAt
-      }
-    });
+    try {
+      await prisma.webSession.create({
+        data: {
+          discordId: user.id,
+          tenantId: tenant.id,
+          refreshHash,
+          expiresAt
+        }
+      });
+    } catch (sessionErr) {
+      console.warn('WebSession não salva (rode web_panel_saas.sql se necessário)', sessionErr.message);
+    }
 
     const access = signAccess({
       discordId: user.id,
