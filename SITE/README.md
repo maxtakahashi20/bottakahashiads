@@ -55,8 +55,17 @@ REDIS_URL=redis://127.0.0.1:6379
 
 No [Discord Developer Portal](https://discord.com/developers/applications):
 
-- OAuth2 → Redirects: `http://localhost:3000/api/auth/callback`
-- Em produção: `https://seu-dominio.com/api/auth/callback`
+1. Abra o **mesmo aplicativo** do bot (`DISCORD_CLIENT_ID` no `.env`).
+2. OAuth2 → **Redirects** → adicione exatamente:
+   - `http://localhost:3000/api/auth/callback`
+3. OAuth2 → **Client Secret** → **Reset Secret** → copie o valor (string longa, **não** é o número do Client ID).
+4. No `.env`:
+   - `DISCORD_CLIENT_ID` = ID do aplicativo (ex: `1508883793799413810`)
+   - `DISCORD_CLIENT_SECRET` = o secret copiado (ex: `abc123...`), **nunca** o Client ID
+
+**Erro comum:** configurar redirect no app "Takahashi Store" mas o `.env` usar o Client ID do bot "Takahashi Ads" — os IDs precisam ser do **mesmo** app.
+
+Em produção: `https://seu-dominio.com/api/auth/callback`
 
 ## Instalação
 

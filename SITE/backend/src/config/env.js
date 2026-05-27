@@ -10,14 +10,29 @@ function required(name) {
   return v;
 }
 
+const clientId = required('DISCORD_CLIENT_ID');
+const clientSecret = process.env.DISCORD_CLIENT_SECRET || '';
+
+if (clientSecret && clientSecret === clientId) {
+  throw new Error(
+    'DISCORD_CLIENT_SECRET não pode ser igual ao DISCORD_CLIENT_ID. ' +
+      'No Developer Portal: OAuth2 → Copiar Client Secret (não é o ID numérico).'
+  );
+}
+if (clientSecret && /^\d{17,20}$/.test(clientSecret.trim())) {
+  throw new Error(
+    'DISCORD_CLIENT_SECRET parece um Client ID. Use o secret alfanumérico do Portal (OAuth2 → Reset Secret).'
+  );
+}
+
 const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.WEB_API_PORT || 3001),
   databaseUrl: required('DATABASE_URL'),
   jwtSecret: process.env.JWT_SECRET || process.env.API_KEY_CHANGE_ME || 'change-me-jwt-secret-min-32-chars!!',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  discordClientId: required('DISCORD_CLIENT_ID'),
-  discordClientSecret: process.env.DISCORD_CLIENT_SECRET || '',
+  discordClientId: clientId,
+  discordClientSecret: clientSecret,
   discordRedirectUri:
     process.env.DISCORD_REDIRECT_URI || 'http://localhost:3000/api/auth/callback',
   webUrl: (process.env.WEB_URL || 'http://localhost:3000').replace(/\/$/, ''),
