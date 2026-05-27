@@ -14,6 +14,8 @@ const { PartnershipService } = require('./services/partnershipService');
 const { StatusService } = require('./services/statusService');
 const { AdQueueService } = require('./modules/ads/adQueueService');
 const { NetworkService } = require('./services/networkService');
+const { DivulgationCycleService } = require('./services/divulgationCycleService');
+const { UserTokenService } = require('./services/userTokenService');
 const { createInviteRouter } = require('./api/inviteRoutes');
 
 const { logger } = require('./utils/logger');
@@ -60,6 +62,9 @@ async function main() {
   client.services.adsQueue = new AdQueueService(client);
   client.services.network = new NetworkService(client);
   client.services.status = new StatusService(client);
+  client.services.divulgationCycle = new DivulgationCycleService(client);
+  client.services.userTokens = new UserTokenService(client);
+  client.panelStatsCache = { data: null, at: 0 };
 
   loadCommands(client);
   loadEvents(client);

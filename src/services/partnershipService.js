@@ -1,3 +1,5 @@
+const { DIVULGATION } = require('../config/constants');
+
 class PartnershipService {
   /**
    * @param {import('../structures/ExtendedClient').ExtendedClient} client
@@ -7,25 +9,38 @@ class PartnershipService {
   }
 
   /**
-   * Parceiros = servidores onde o bot está (exceto quem está anunciando).
-   * Servidor com /setup-ads → Desativar rede não recebe mais.
+   * Todos os parceiros com canal configurado (bot pode não estar no servidor).
    */
   async listNetworkTargets({ excludeGuildId } = {}) {
+    const rows = await this.client.prisma.guildSettings.findMany({
+      where: {
+        adsChannelId: { not: null },
+        adsEnabled: { not: false }
+      }
+    });
+
     const targets = [];
+    for (const s of rows) {
+      if (excludeGuildId && s.guildId === excludeGuildId) continue;
 
-    for (const guild of this.client.guilds.cache.values()) {
-      if (excludeGuildId && guild.id === excludeGuildId) continue;
-
-      const settings = await this.client.services.guildSettings.get(guild.id);
-      if (settings?.adsEnabled === false) continue;
-
+      const cached = this.client.guilds.cache.get(s.guildId);
       targets.push({
-        guildId: guild.id,
-        guildName: guild.name
+        guildId: s.guildId,
+        guildName: cached?.name || s.partnerGuildName || `Servidor ${s.guildId}`,
+        channelId: s.adsChannelId,
+        delayMinutes: s.delayMinutes || DIVULGATION.minIntervalMinutes
       });
     }
-
     return targets;
+  }
+
+  async countConfigured() {
+    return this.client.prisma.guildSettings.count({
+      where: {
+        adsChannelId: { not: null },
+        adsEnabled: { not: false }
+      }
+    });
   }
 
   getBotGuildCount() {

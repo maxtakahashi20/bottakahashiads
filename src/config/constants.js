@@ -15,6 +15,11 @@ const LIMITS = {
   inviteUrlMax: 200
 };
 
+/** Intervalo mínimo entre divulgações no mesmo servidor / ciclo global */
+const DIVULGATION = {
+  minIntervalMinutes: 50
+};
+
 const SECURITY = {
   blockedMentions: ['@everyone', '@here'],
   // links tipicamente usados em scam; mantém conservador (false positives são caros).
@@ -27,5 +32,5 @@ const SECURITY = {
   ]
 };
 
-module.exports = { BRAND, LIMITS, SECURITY };
+module.exports = { BRAND, LIMITS, SECURITY, DIVULGATION };
 

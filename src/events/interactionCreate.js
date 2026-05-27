@@ -12,6 +12,8 @@ const { BRAND } = require('../config/constants');
 const { safeReply, deferEphemeral, deferComponent } = require('../utils/interaction');
 const { isNetworkAdmin } = require('../utils/permissions');
 const { buildRedePanel } = require('../modules/network/redePanel');
+const { handlePanelInteraction, handlePanelModal, isPanelInteraction } = require('../modules/panel/panelHandler');
+const { nextSendDate } = require('../utils/divulgationLimits');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -32,6 +34,40 @@ module.exports = {
         const cmd = client.commands.get(interaction.commandName);
         if (!cmd) return;
         await cmd.execute(client, interaction);
+        return;
+      }
+
+      if (
+        (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) &&
+        isPanelInteraction(interaction)
+      ) {
+        if (interaction.isModalSubmit()) {
+          const handled = await handlePanelModal(client, interaction);
+          if (handled) return;
+        } else {
+          const handled = await handlePanelInteraction(client, interaction);
+          if (handled) return;
+        }
+      }
+
+      if (interaction.isChannelSelectMenu() && interaction.customId === 'ads:setup:channelSelect') {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+          await safeReply(interaction, { content: 'Sem permissão para configurar.' });
+          return;
+        }
+        await deferComponent(interaction);
+        const channelId = interaction.values[0];
+        const s = await client.services.guildSettings.update(interaction.guildId, {
+          adsChannelId: channelId,
+          adsEnabled: true,
+          nextSendAt: nextSendDate(50)
+        });
+        await client.services.logs.write('setup_channel', {
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
+          message: `Canal de divulgação: ${channelId}`
+        });
+        await interaction.editReply(buildSetupPanel(s));
         return;
       }
 
@@ -317,12 +353,12 @@ module.exports = {
           .slice(0, 8)
           .join(', ');
 
-        let statusMsg = `✅ Anúncio enfileirado! DMs serão enviadas aos membros de **${safeTargets.length}** servidor(es) parceiro(s).`;
+        let statusMsg = `✅ Anúncio enfileirado! Será publicado no **canal de divulgação** de **${safeTargets.length}** servidor(es) parceiro(s).`;
         if (targetNames) statusMsg += `\n📡 **Destinos:** ${targetNames}`;
         statusMsg += `\n🤖 Bot está em **${botTotal}** servidor(es) (o servidor atual não recebe o próprio anúncio).`;
         if (safeTargets.length === 0 && botTotal > 1) {
           statusMsg +=
-            '\n⚠️ Nenhum parceiro ativo. Peça aos outros servidores: `/setup-ads` → **Ativar rede**.';
+            '\n⚠️ Nenhum parceiro com canal configurado. Use `/setup-ads` ou `/painel` → **Servidores** → **Adicionar Servidor**.';
         }
 
         await interaction.editReply({

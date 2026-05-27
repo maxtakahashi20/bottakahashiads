@@ -11,7 +11,7 @@ function buildRedePanel(state) {
     .setDescription(
       [
         state.enabled
-          ? '🟢 **Rede LIGADA** — anúncios e DMs estão permitidos.'
+          ? '🟢 **Rede LIGADA** — anúncios em canais de parceria estão permitidos.'
           : '🔴 **Rede DESLIGADA** — nenhum anúncio novo será enviado.',
         '',
         `**Fila de envio:** \`${state.queueSize}\` pendente(s)`,

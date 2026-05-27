@@ -10,7 +10,7 @@ class StatusService {
     this.idx = 0;
     this.messages = [
       () => `🌐 Rede de anúncios: ${this.client.guilds.cache.size} servidores`,
-      () => `/setup-ads para entrar na rede`,
+      () => `/painel • /setup-ads • canais de parceria`,
       () => `Parcerias • FiveM • RP • Gaming`,
       () => `Powered by Takahashi Network`
     ];

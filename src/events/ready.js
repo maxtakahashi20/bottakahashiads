@@ -24,5 +24,11 @@ module.exports = {
     await client.services.logs.write('ready', {
       message: `Bot online como ${client.user?.tag} (${client.guilds.cache.size} servidores)`
     });
+
+    const { SystemConfigService } = require('../services/systemConfigService');
+    const cfg = await new SystemConfigService().get();
+    if (cfg.botRunning) {
+      client.services.divulgationCycle.start();
+    }
   }
 };

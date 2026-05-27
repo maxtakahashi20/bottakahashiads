@@ -1,5 +1,8 @@
 const { setTimeout: delay } = require('timers/promises');
-const { deliverToGuildMembers } = require('./memberDmService');
+const { ChannelDeliveryService } = require('./channelDeliveryService');
+const { SystemConfigService } = require('../../services/systemConfigService');
+const { DivulgationRunService } = require('../../services/divulgationRunService');
+const { canSendToGuild, nextSendDate } = require('../../utils/divulgationLimits');
 
 const DELIVERY_BATCH = 100;
 
@@ -11,7 +14,9 @@ class AdQueueService {
     this.client = client;
     this.queue = [];
     this.running = false;
-    this.guildDelayMs = 2000;
+    this.delivery = new ChannelDeliveryService(client);
+    this.systemConfig = new SystemConfigService();
+    this.divRuns = new DivulgationRunService();
   }
 
   getQueueSize() {
@@ -42,31 +47,31 @@ class AdQueueService {
           break;
         }
 
+        const cfg = await this.systemConfig.get();
+        if (!cfg.botRunning) {
+          this.clearQueue();
+          break;
+        }
+
         const job = this.queue.shift();
         // eslint-disable-next-line no-await-in-loop
         await this._processJob(job);
-        // eslint-disable-next-line no-await-in-loop
-        await delay(this.guildDelayMs);
       }
     } finally {
       this.running = false;
     }
   }
 
-  async _saveDeliveries(advertisementId, guildId, deliveries) {
-    for (let i = 0; i < deliveries.length; i += DELIVERY_BATCH) {
-      const chunk = deliveries.slice(i, i + DELIVERY_BATCH);
-      // eslint-disable-next-line no-await-in-loop
-      await this.client.prisma.adDelivery.createMany({
-        data: chunk.map((d) => ({
-          advertisementId,
-          targetGuildId: guildId,
-          targetChannelId: d.userId,
-          status: d.status,
-          error: d.error
-        }))
-      });
-    }
+  async _saveDeliveries(advertisementId, guildId, channelId, ok, error) {
+    await this.client.prisma.adDelivery.create({
+      data: {
+        advertisementId,
+        targetGuildId: guildId,
+        targetChannelId: channelId,
+        status: ok ? 'sent' : 'failed',
+        error: error || null
+      }
+    });
   }
 
   async _processJob(job) {
@@ -75,33 +80,52 @@ class AdQueueService {
       return;
     }
 
+    const cfg = await this.systemConfig.get();
+    if (!cfg.botRunning) return;
+
     const { advertisementId, embed, components, targets } = job;
+    let run = await this.divRuns.getCurrent();
+    if (!run) run = await this.divRuns.start(advertisementId);
+
+    const channelTargets = [];
+    for (const t of targets) {
+      if (!t.channelId) continue;
+      const s = await this.client.services.guildSettings.get(t.guildId);
+      if (canSendToGuild(s)) channelTargets.push(t);
+    }
     let ok = 0;
     let fail = 0;
 
-    for (const t of targets) {
-      const guildId = t.guildId;
+    const payloadBase = { embeds: [embed], components: components || [] };
 
-      // eslint-disable-next-line no-await-in-loop
-      const result = await deliverToGuildMembers(this.client, {
-        guildId,
-        embed,
-        components
-      });
-
-      ok += result.ok;
-      fail += result.fail;
-
-      if (result.deliveries.length) {
-        // eslint-disable-next-line no-await-in-loop
-        await this._saveDeliveries(advertisementId, guildId, result.deliveries);
+    const { sent, errors } = await this.delivery.deliverToTargets(
+      channelTargets,
+      async () => payloadBase,
+      {
+        delayMsgMin: cfg.delayMsgMinSec,
+        delayMsgMax: cfg.delayMsgMaxSec,
+        delayGuildMin: cfg.delayGuildMinSec,
+        delayGuildMax: cfg.delayGuildMaxSec,
+        messagesPerServer: cfg.messagesPerCycle,
+        onSuccess: async (t) => {
+          const s = await this.client.services.guildSettings.get(t.guildId);
+          await this.client.services.guildSettings.update(t.guildId, {
+            nextSendAt: nextSendDate(s?.delayMinutes)
+          });
+          await this._saveDeliveries(advertisementId, t.guildId, t.channelId, true);
+        },
+        onError: async (t, err) => {
+          await this._saveDeliveries(advertisementId, t.guildId, t.channelId, false, err);
+        }
       }
+    );
 
-      this.client.logger.info(
-        { guildId, sent: result.ok, failed: result.fail, members: result.members },
-        'DMs enviadas no servidor'
-      );
-    }
+    ok = sent;
+    fail = errors;
+
+    await this.divRuns.bump(run.id, { messages: ok, cycles: 1, errors: fail });
+    await this.systemConfig.incrementCycles(1);
+    await this.systemConfig.touchLastSend();
 
     await this.client.prisma.advertisement.update({
       where: { id: advertisementId },
@@ -110,8 +134,8 @@ class AdQueueService {
 
     await this.client.services.analytics.incDeliveries(ok, fail);
     await this.client.services.logs.write('ad_delivered', {
-      message: `Entrega DM: ok=${ok} fail=${fail} em ${targets.length} servidor(es)`,
-      meta: { advertisementId, ok, fail, guilds: targets.length }
+      message: `Entrega em canais: ok=${ok} fail=${fail} em ${channelTargets.length} servidor(es)`,
+      meta: { advertisementId, ok, fail, guilds: channelTargets.length }
     });
   }
 }

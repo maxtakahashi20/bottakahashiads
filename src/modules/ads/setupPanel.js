@@ -2,21 +2,31 @@ const {
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelType
 } = require('discord.js');
-const { BRAND } = require('../../config/constants');
+const { BRAND, DIVULGATION } = require('../../config/constants');
+const { fmtDate } = require('../panel/panelFormat');
 
-function buildSetupPanel(settings) {
+function buildSetupPanel(settings, channelLabel = null) {
+  const channelInfo = settings.adsChannelId
+    ? `<#${settings.adsChannelId}>`
+    : '⚠️ **Não configurado** — selecione abaixo';
+
   const embed = new EmbedBuilder()
     .setColor(BRAND.color)
-    .setTitle('Painel de Configuração — Ads Network')
+    .setTitle('Painel de Configuração — Takahashi Network')
     .setDescription(
       [
-        'Configure como este servidor participa da **Takahashi Network**.',
+        'Configure como este servidor participa da **rede de parcerias**.',
         '',
-        '**Modo de entrega:** mensagens diretas (DM) para cada membro do servidor — **nada é postado em canais**.',
+        '**Modo de entrega:** mensagens no **canal de divulgação** configurado (sem DM).',
         '',
-        `**Status:** ${settings.adsEnabled ? '✅ Ativo (recebe anúncios na DM)' : '⛔ Desativado'}`,
+        `**Status:** ${settings.adsEnabled ? '✅ Ativo' : '⛔ Desativado'}`,
+        `**Canal de divulgação:** ${channelLabel || channelInfo}`,
+        `**Delay entre envios:** \`${settings.delayMinutes || DIVULGATION.minIntervalMinutes} min\` (mín. ${DIVULGATION.minIntervalMinutes})`,
+        settings.nextSendAt ? `**Próximo envio:** ${fmtDate(settings.nextSendAt)}` : '',
         `**Cooldown (Usuário):** \`${settings.userCooldownSec}s\``,
         `**Cooldown (Servidor):** \`${settings.guildCooldownSec}s\``,
         `**Categorias permitidas:** ${
@@ -25,11 +35,20 @@ function buildSetupPanel(settings) {
             : '`Todas`'
         }`,
         '',
-        '_Membros com DM fechada não recebem o anúncio (contado como falha)._'
-      ].join('\n')
+        '_Use `/painel` para gerenciar todos os servidores da rede._'
+      ]
+        .filter(Boolean)
+        .join('\n')
     )
     .setFooter({ text: BRAND.footer })
     .setTimestamp(new Date());
+
+  const rowChannel = new ActionRowBuilder().addComponents(
+    new ChannelSelectMenuBuilder()
+      .setCustomId('ads:setup:channelSelect')
+      .setPlaceholder('Selecione o canal de divulgação')
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+  );
 
   const rowButtons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -46,7 +65,7 @@ function buildSetupPanel(settings) {
       .setLabel('Categorias')
   );
 
-  return { embeds: [embed], components: [rowButtons] };
+  return { embeds: [embed], components: [rowChannel, rowButtons] };
 }
 
 module.exports = { buildSetupPanel };

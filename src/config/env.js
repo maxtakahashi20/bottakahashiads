@@ -12,6 +12,7 @@ const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   discordToken: required('DISCORD_TOKEN'),
   discordClientId: required('DISCORD_CLIENT_ID'),
+  /** Se definido, registra comandos só neste servidor (instantâneo) */
   devGuildId: process.env.DISCORD_DEV_GUILD_ID || null,
   databaseUrl: required('DATABASE_URL'),
   port: Number(process.env.PORT || 3000),

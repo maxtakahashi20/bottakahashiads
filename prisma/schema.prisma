@@ -11,8 +11,12 @@ datasource db {
 model GuildSettings {
   id                String        @id @default(cuid())
   guildId           String        @unique
-  adsEnabled        Boolean       @default(false)
+  adsEnabled        Boolean       @default(true)
   adsChannelId      String?
+  partnerGuildName  String?
+  delayMinutes      Int           @default(50)
+  customMessage     String?
+  nextSendAt        DateTime?
   userCooldownSec   Int           @default(900)
   guildCooldownSec  Int           @default(900)
   allowedCategories AdCategory[]  @default([])
@@ -133,6 +137,56 @@ model LogEvent {
   @@index([type, createdAt(sort: Desc)])
   @@index([guildId, createdAt(sort: Desc)])
   @@index([userId])
+}
+
+model SystemConfig {
+  id               String    @id @default("global")
+  botRunning       Boolean   @default(true)
+  globalMessage    String?
+  globalBannerUrl  String?
+  globalInviteUrl  String?
+  messagesPerCycle Int       @default(1)
+  delayMsgMinSec   Float     @default(2)
+  delayMsgMaxSec   Float     @default(5)
+  delayGuildMinSec Float     @default(15)
+  delayGuildMaxSec Float     @default(35)
+  minCycleMinutes  Float     @default(50)
+  totalCycles      Int       @default(0)
+  scheduledAt      DateTime?
+  lastSendAt       DateTime?
+  updatedAt        DateTime  @updatedAt
+}
+
+model DivulgationRun {
+  id              String    @id @default(cuid())
+  number          Int       @default(0)
+  status          String    @default("running")
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  messagesSent    Int       @default(0)
+  cyclesDone      Int       @default(0)
+  errorsCount     Int       @default(0)
+  advertisementId String?
+
+  @@index([status, startedAt(sort: Desc)])
+}
+
+model UserToken {
+  id             String    @id @default(cuid())
+  slot           Int
+  ownerId        String
+  discordUserId  String
+  username       String
+  tokenEnc       String
+  active         Boolean   @default(true)
+  lastError      String?
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([slot])
+  @@index([active])
+  @@index([ownerId])
 }
 
 model Cart {
