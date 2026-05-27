@@ -60,29 +60,34 @@ No [Discord Developer Portal](https://discord.com/developers/applications):
 
 ## Instalação
 
-```bash
-# Na raiz do bot
+```powershell
+# Na raiz do bot (PowerShell — use ; em vez de &&)
+cd "D:\BOT TAKAHASHI ADS"
 npm run prisma:generate
 
-# Painel web
 cd SITE
 npm install
-cd backend && npm install
-cd ../frontend && npm install
+
+cd frontend
+npm install
 ```
 
 ## Desenvolvimento
 
-```bash
-# Terminal 1 — Bot
+```powershell
+# Terminal 1 — Bot (raiz do projeto)
 npm run dev
 
 # Terminal 2 — API
-cd SITE/backend && npm run dev
+cd SITE\backend
+npm run dev
 
 # Terminal 3 — Frontend
-cd SITE/frontend && npm run dev
+cd SITE\frontend
+npm run dev
 ```
+
+> **PowerShell:** o operador `&&` só funciona no PowerShell 7+. Use `;` ou comandos em terminais separados.
 
 Ou na pasta `SITE`:
 
