@@ -278,6 +278,7 @@ class UserTokenService {
 
     let lastError = 'Falha ao enviar';
     let permissionFailures = 0;
+    let lastRateLimitSec = null;
 
     for (const row of tryList) {
       if (this._isTokenRateLimited(row.id)) continue;
@@ -296,6 +297,9 @@ class UserTokenService {
           return { ok: true, via: 'user', tokenSlot: row.slot };
         }
         lastError = result.error;
+        if (result.status === 429) {
+          lastRateLimitSec = Math.max(lastRateLimitSec || 0, result.retryAfterSec || 15);
+        }
         this.client.logger.warn(
           { channelId, slot: row.slot, error: result.error, status: result.status, code: result.code },
           'Falha envio user token'
@@ -328,6 +332,17 @@ class UserTokenService {
     }
 
     this._lastSendError = lastError;
+
+    // Se todos falharam por rate limit, informe retry para o delivery respeitar backoff.
+    if (lastRateLimitSec) {
+      return {
+        ok: false,
+        error: `Rate limit — aguarde ${lastRateLimitSec}s e tente novamente`,
+        via: 'user',
+        rateLimited: true,
+        retryAfterSec: lastRateLimitSec
+      };
+    }
 
     const channel = await this.client.channels.fetch(channelId).catch(() => null);
     if (channel?.isTextBased?.()) {

@@ -56,6 +56,7 @@ class ChannelDeliveryService {
     let sent = 0;
     let errors = 0;
     let lastError = null;
+    let extraBackoffMs = 0;
 
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
@@ -63,7 +64,15 @@ class ChannelDeliveryService {
       if (!payload) continue;
 
       for (let m = 0; m < messagesPerServer; m++) {
-        const result = await this.postToChannel(t.channelId, payload);
+        let result = await this.postToChannel(t.channelId, payload);
+        if (!result.ok && result.rateLimited && result.retryAfterSec) {
+          const waitMs = Math.min(90_000, Math.max(1_000, result.retryAfterSec * 1000 + 750));
+          extraBackoffMs = Math.min(60_000, extraBackoffMs + 2500);
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(waitMs);
+          // eslint-disable-next-line no-await-in-loop
+          result = await this.postToChannel(t.channelId, payload);
+        }
         if (result.skipped) continue;
         if (result.ok) {
           sent++;
@@ -89,7 +98,9 @@ class ChannelDeliveryService {
       }
 
       if (i < targets.length - 1) {
-        await sleep(randomBetween(delayGuildMin, delayGuildMax) * 1000);
+        const base = randomBetween(delayGuildMin, delayGuildMax) * 1000;
+        const wait = base + extraBackoffMs;
+        await sleep(wait);
       }
     }
 
