@@ -52,8 +52,17 @@ class DivulgationCycleService {
     }, ms);
   }
 
-  buildGlobalPayload(cfg, guildSettings) {
-    return buildChannelMessagePayload(cfg, guildSettings, { preferContent: true });
+  async buildGlobalPayload(cfg, guildSettings) {
+    let embedTemplate = null;
+    try {
+      embedTemplate = await this.client.prisma.tenantEmbedTemplate.findUnique({
+        where: { tenantId: this.tenantId }
+      });
+    } catch {
+      /* tabela pode não existir ainda */
+    }
+    const preferContent = !embedTemplate?.useEmbedMode;
+    return buildChannelMessagePayload(cfg, guildSettings, { preferContent, embedTemplate });
   }
 
   /**

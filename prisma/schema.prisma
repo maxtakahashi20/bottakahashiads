@@ -234,6 +234,9 @@ model Tenant {
   cooldowns     Cooldown[]
   divulgationRuns DivulgationRun[]
   auditLogs     AuditLog[]
+  branding      TenantBranding?
+  embedTemplate TenantEmbedTemplate?
+  webSessions   WebSession[]
 }
 
 model License {
@@ -290,8 +293,56 @@ model TenantSettings {
   scheduledAt      DateTime?
   lastSendAt       DateTime?
   networkEnabled   Boolean  @default(true)
+  configVersion    Int      @default(1)
   updatedAt        DateTime @updatedAt
   tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+/// Branding do bot visível no painel web (nome, avatar, status).
+model TenantBranding {
+  id              String   @id @default(cuid())
+  tenantId        String   @unique
+  botDisplayName  String?
+  botAvatarUrl    String?
+  botStatusText   String?
+  botStatusType   String?  @default("online")
+  botDescription  String?
+  primaryColor    String?  @default("#5865F2")
+  updatedAt       DateTime @updatedAt
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+/// Template de embed editável no painel web.
+model TenantEmbedTemplate {
+  id            String   @id @default(cuid())
+  tenantId      String   @unique
+  title         String?
+  description   String?
+  color         Int?
+  bannerUrl     String?
+  thumbnailUrl  String?
+  footerText    String?
+  footerIconUrl String?
+  buttonLabel   String?
+  buttonUrl     String?
+  useEmbedMode  Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+/// Sessão web OAuth (opcional; JWT é primário).
+model WebSession {
+  id           String   @id @default(cuid())
+  discordId    String
+  tenantId     String?
+  refreshHash  String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([discordId])
+  @@index([tenantId])
+  @@index([expiresAt])
 }
 
 model AuditLog {

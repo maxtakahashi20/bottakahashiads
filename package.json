@@ -16,7 +16,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "pack:discloud": "powershell -ExecutionPolicy Bypass -File scripts/pack-discloud.ps1"
+    "pack:discloud": "powershell -ExecutionPolicy Bypass -File scripts/pack-discloud.ps1",
+    "site:install": "cd SITE && npm install && npm install -w backend && npm install -w frontend",
+    "site:dev": "cd SITE && npm run dev"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",

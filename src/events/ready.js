@@ -67,5 +67,10 @@ module.exports = {
     }
 
     client.logger.info('SaaS: tenants, licenças e ciclos multi-tenant inicializados');
+
+    if (client.services.webSync) {
+      client.services.webSync.start();
+      client.logger.info('Painel web: sync de branding/embed ativo (60s)');
+    }
   }
 };

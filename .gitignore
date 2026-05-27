@@ -17,3 +17,6 @@ prisma/*.db
 deploy-discloud.zip
 deploy-temp
 
+SITE/**/node_modules
+SITE/frontend/.next
+

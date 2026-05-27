@@ -23,6 +23,7 @@ const { SubscriptionService } = require('./services/subscriptionService');
 const { TenantConfigService } = require('./services/tenantConfigService');
 const { ExpirationService } = require('./services/expirationService');
 const { TenantCycleManager } = require('./services/tenantCycleManager');
+const { TenantWebSyncService } = require('./services/tenantWebSyncService');
 const { RenewalService } = require('./modules/payments/renewalService');
 const { PLATFORM_TENANT_ID } = require('./config/licensing');
 const { createInviteRouter } = require('./api/inviteRoutes');
@@ -81,6 +82,7 @@ async function main() {
   client.services.tenantCycles = new TenantCycleManager(client);
   client.services.userTokens = new UserTokenService(client);
   client.services.divulgationCycle = new DivulgationCycleService(client, PLATFORM_TENANT_ID);
+  client.services.webSync = new TenantWebSyncService(client);
   client.panelStatsCache = { data: null, at: 0 };
 
   loadCommands(client);
