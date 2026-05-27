@@ -36,6 +36,8 @@ prisma/migrations/web_panel_saas.sql
 
 ## Variáveis de ambiente
 
+**Raiz do bot** (`.env`) — secrets e banco:
+
 Adicione no `.env` da raiz:
 
 ```env
@@ -52,6 +54,14 @@ JWT_SECRET=uma-chave-secreta-longa-minimo-32-caracteres
 INTERNAL_API_KEY=mesma-chave-do-API_KEY_CHANGE_ME
 REDIS_URL=redis://127.0.0.1:6379
 ```
+
+**Frontend** (`SITE/frontend/.env`) — só isto:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
+
+Não coloque `DISCORD_CLIENT_SECRET` no `.env` do frontend (use apenas na raiz).
 
 No [Discord Developer Portal](https://discord.com/developers/applications):
 
