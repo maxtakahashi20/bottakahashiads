@@ -233,22 +233,46 @@ function buildMessagePanel(cfg, serverCount) {
   return { embeds: [header, embed], components: [row1, row2] };
 }
 
-function buildTrackingPanel() {
+function buildTrackingPanel(cfg = {}) {
+  const invite = cfg.globalInviteUrl?.trim();
+  const description = invite
+    ? [
+        '✅ **Convite principal configurado**',
+        '',
+        `🔗 **URL:** ${invite}`,
+        '',
+        'Use **Ver Detalhes** para revisar ou **Deletar Tracking** para remover.'
+      ].join('\n')
+    : [
+        '🔍 **Nenhum convite de tracking configurado**',
+        '',
+        'Clique em **Adicionar Tracking** e informe o link do convite Discord que deseja rastrear nas divulgações.'
+      ].join('\n');
+
   const embed = withBanner(
     new EmbedBuilder()
       .setColor(BRAND.color)
       .setTitle('👥 Bot Tracking - Rastreamento de Convites')
-      .setDescription(
-        '🔍 **Nenhum tracking ativo**\n\nClique em **Adicionar Tracking** para começar a rastrear convites!\n\n_Em breve na Takahashi Network._'
-      )
+      .setDescription(description)
       .setFooter({ text: BRAND.footer })
       .setTimestamp()
   );
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('tn:tracking:add').setStyle(ButtonStyle.Secondary).setLabel('Adicionar Tracking').setDisabled(true),
-    new ButtonBuilder().setCustomId('tn:tracking:view').setStyle(ButtonStyle.Primary).setLabel('Ver Detalhes').setDisabled(true),
-    new ButtonBuilder().setCustomId('tn:tracking:del').setStyle(ButtonStyle.Danger).setLabel('Deletar Tracking').setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(PANEL.TRACKING_ADD)
+      .setStyle(ButtonStyle.Success)
+      .setLabel(invite ? 'Alterar Convite' : 'Adicionar Tracking'),
+    new ButtonBuilder()
+      .setCustomId(PANEL.TRACKING_VIEW)
+      .setStyle(ButtonStyle.Primary)
+      .setLabel('Ver Detalhes')
+      .setDisabled(!invite),
+    new ButtonBuilder()
+      .setCustomId(PANEL.TRACKING_DEL)
+      .setStyle(ButtonStyle.Danger)
+      .setLabel('Deletar Tracking')
+      .setDisabled(!invite),
     new ButtonBuilder().setCustomId(PANEL.BACK).setStyle(ButtonStyle.Secondary).setLabel('↩️ Voltar')
   );
 

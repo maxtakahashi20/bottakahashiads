@@ -28,6 +28,9 @@ const PANEL = {
   DIV_SELECT: `${PREFIX}:div_select`,
   CYCLES_EDIT: `${PREFIX}:cycles_edit`,
   CYCLES_RESET: `${PREFIX}:cycles_reset`,
+  TRACKING_ADD: `${PREFIX}:tracking_add`,
+  TRACKING_VIEW: `${PREFIX}:tracking_view`,
+  TRACKING_DEL: `${PREFIX}:tracking_del`,
   BACK: `${PREFIX}:back`
 };
 
@@ -38,7 +41,8 @@ const MODAL = {
   CYCLES: `${PREFIX}:modal:cycles`,
   DIV_NUMBER: `${PREFIX}:modal:div_number`,
   TOKEN_ADD: `${PREFIX}:modal:token_add`,
-  TOKEN_REMOVE: `${PREFIX}:modal:token_remove`
+  TOKEN_REMOVE: `${PREFIX}:modal:token_remove`,
+  TRACKING_ADD: `${PREFIX}:modal:tracking_add`
 };
 
 module.exports = { PREFIX, PANEL, MODAL };

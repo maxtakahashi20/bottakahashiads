@@ -75,8 +75,11 @@ class UserTokenService {
     return this._safe(() => prisma.userToken.findMany({ orderBy: { slot: 'asc' } }), []);
   }
 
-  async countActive() {
-    return this._safe(() => prisma.userToken.count({ where: { active: true } }), 0);
+  async countActive(tenantId = PLATFORM_TENANT_ID) {
+    return this._safe(
+      () => prisma.userToken.count({ where: { active: true, tenantId } }),
+      0
+    );
   }
 
   async getDecrypted(row) {

@@ -1,6 +1,16 @@
 const { buildTenantHome, BTN } = require('./tenantPanel');
+const { PANEL } = require('../panel/panelIds');
+const { setPanelTenant } = require('../panel/panelScope');
 const { requireActiveTenant } = require('../../utils/tenantContext');
-const { deferComponent, EPHEMERAL } = require('../../utils/interaction');
+const { handlePanelInteraction } = require('../panel/panelHandler');
+const { EPHEMERAL } = require('../../utils/interaction');
+
+/** Mapeia botões antigos do painel tenant para o painel completo */
+const LEGACY_MAP = {
+  [BTN.REFRESH]: PANEL.REFRESH,
+  [BTN.TOGGLE_BOT]: PANEL.STOP,
+  [BTN.SEND_NOW]: PANEL.SERVER_SEND_NOW
+};
 
 async function handleTenantPanelButton(client, interaction) {
   const id = interaction.customId;
@@ -12,47 +22,13 @@ async function handleTenantPanelButton(client, interaction) {
     return true;
   }
 
-  const { tenant, subscription } = gate.ctx;
-  await deferComponent(interaction);
+  setPanelTenant(interaction.user.id, gate.ctx.tenant.id);
 
-  const cfg = await client.services.tenantConfig.get(tenant.id);
-
-  if (id === BTN.TOGGLE_BOT) {
-    await client.services.tenantConfig.update(tenant.id, { botRunning: !cfg.botRunning });
-    if (!cfg.botRunning) {
-      client.services.tenantCycles.startForTenant(tenant.id);
-    } else {
-      client.services.tenantCycles.stopForTenant(tenant.id);
-    }
+  if (LEGACY_MAP[id]) {
+    return handlePanelInteraction(client, interaction, LEGACY_MAP[id]);
   }
 
-  if (id === BTN.SEND_NOW) {
-    const cycle = client.services.tenantCycles.get(tenant.id) ||
-      client.services.tenantCycles.startForTenant(tenant.id);
-    const send = await cycle.sendImmediate();
-    const detail = send?.reason || 'Concluído.';
-    if (send?.sent > 0) {
-      await interaction.followUp({
-        content: `🚀 **${send.sent}** mensagem(ns) enviada(s).`,
-        flags: EPHEMERAL
-      });
-    } else {
-      await interaction.followUp({ content: `⚠️ ${detail}`, flags: EPHEMERAL });
-    }
-  }
-
-  const freshCfg = await client.services.tenantConfig.get(tenant.id);
-  const serverCount = await client.services.guildSettings.countForTenant(tenant.id);
-  const sub =
-    subscription || (await client.services.subscriptions.getActiveForTenant(tenant.id));
-  const payload = buildTenantHome({
-    tenant,
-    subscription: sub,
-    cfg: freshCfg,
-    serverCount
-  });
-  await interaction.editReply(payload);
-  return true;
+  return handlePanelInteraction(client, interaction);
 }
 
-module.exports = { handleTenantPanelButton };
+module.exports = { handleTenantPanelButton, buildTenantHome, BTN };

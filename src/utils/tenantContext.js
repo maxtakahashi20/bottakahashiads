@@ -1,5 +1,6 @@
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
 const { isPlatformOwner } = require('./permissions');
+const { isMissingTableError } = require('./prismaSafe');
 
 /**
  * Resolve tenant do usuário para isolamento multi-tenant.
@@ -10,10 +11,16 @@ async function resolveTenantContext(client, interaction) {
   const userId = interaction.user.id;
   const platformOwner = isPlatformOwner(interaction);
 
-  const tenant = await client.services.tenants.getByOwner(userId);
+  let tenant = null;
   let subscription = null;
-  if (tenant && !tenant.isPlatform) {
-    subscription = await client.services.subscriptions.getActiveForTenant(tenant.id);
+
+  try {
+    tenant = await client.services.tenants.getByOwner(userId);
+    if (tenant && !tenant.isPlatform) {
+      subscription = await client.services.subscriptions.getActiveForTenant(tenant.id);
+    }
+  } catch (err) {
+    if (!isMissingTableError(err)) throw err;
   }
 
   const isActiveClient =

@@ -34,7 +34,13 @@ module.exports = {
     try {
       if (interaction.isChatInputCommand()) {
         const cmd = client.commands.get(interaction.commandName);
-        if (!cmd) return;
+        if (!cmd) {
+          await safeReply(interaction, {
+            content:
+              '⚠️ Comando não carregado nesta instância. Faça redeploy e rode `npm run register:commands`.'
+          });
+          return;
+        }
         await cmd.execute(client, interaction);
         return;
       }

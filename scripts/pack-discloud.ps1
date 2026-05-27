@@ -24,9 +24,8 @@ Get-ChildItem -Path $root -Force | ForEach-Object {
 
   if ($_.PSIsContainer) {
     if ($name -eq "src") {
-      # Copia src sem registerCommands (opcional local)
       $destSrc = Join-Path $temp "src"
-      robocopy (Join-Path $root "src") $destSrc /E /XD scripts /XF "registerCommands.js" /NFL /NDL /NJH /NJS | Out-Null
+      robocopy (Join-Path $root "src") $destSrc /E /NFL /NDL /NJH /NJS | Out-Null
     } elseif ($name -eq "prisma") {
       $destPrisma = Join-Path $temp "prisma"
       New-Item -ItemType Directory -Path $destPrisma | Out-Null

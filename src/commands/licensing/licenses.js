@@ -1,9 +1,10 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { EPHEMERAL } = require('../../utils/interaction');
+const { deferEphemeral } = require('../../utils/interaction');
 const { DURATION_LABELS } = require('../../config/licensing');
 const { BRAND } = require('../../config/constants');
 const { fmtDate } = require('../../modules/panel/panelFormat');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -14,33 +15,37 @@ module.exports = {
     ),
 
   async execute(client, interaction) {
+    await deferEphemeral(interaction);
+
     if (!isPlatformOwner(interaction)) {
-      await interaction.reply({
-        content: '❌ Sem permissão.',
-        flags: EPHEMERAL
-      });
+      await interaction.editReply({ content: '❌ Sem permissão.' });
       return;
     }
 
-    const limit = interaction.options.getInteger('limite') || 15;
-    const rows = await client.services.licenses.listRecent(limit);
+    try {
+      const limit = interaction.options.getInteger('limite') || 15;
+      const rows = await client.services.licenses.listRecent(limit);
 
-    const lines = rows.map((l) => {
-      const who = l.tenant?.displayName || l.activatedByUserId || '—';
-      return [
-        `\`${l.code}\``,
-        `${DURATION_LABELS[l.duration]} | **${l.status}**`,
-        l.activatedAt ? `Ativada: ${fmtDate(l.activatedAt)} | ${who}` : `Criada: ${fmtDate(l.createdAt)}`
-      ].join('\n');
-    });
+      const lines = rows.map((l) => {
+        const who = l.tenant?.displayName || l.activatedByUserId || '—';
+        return [
+          `\`${l.code}\``,
+          `${DURATION_LABELS[l.duration]} | **${l.status}**`,
+          l.activatedAt ? `Ativada: ${fmtDate(l.activatedAt)} | ${who}` : `Criada: ${fmtDate(l.createdAt)}`
+        ].join('\n');
+      });
 
-    const embed = new EmbedBuilder()
-      .setColor(BRAND.color)
-      .setTitle('📋 Licenças')
-      .setDescription(lines.length ? lines.join('\n\n') : '_Nenhuma licença._')
-      .setFooter({ text: `${rows.length} registro(s)` })
-      .setTimestamp();
+      const embed = new EmbedBuilder()
+        .setColor(BRAND.color)
+        .setTitle('📋 Licenças')
+        .setDescription(lines.length ? lines.join('\n\n') : '_Nenhuma licença._')
+        .setFooter({ text: `${rows.length} registro(s)` })
+        .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], flags: EPHEMERAL });
+      await interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+      client.logger.error({ err }, 'licenses command failed');
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err)}` });
+    }
   }
 };

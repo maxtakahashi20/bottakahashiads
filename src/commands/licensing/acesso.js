@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { EPHEMERAL } = require('../../utils/interaction');
+const { deferEphemeral } = require('../../utils/interaction');
 const { DURATION_LABELS } = require('../../config/licensing');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 const DURATION_MAP = {
   '1m': 'MONTH_1',
@@ -29,36 +30,42 @@ module.exports = {
     ),
 
   async execute(client, interaction) {
+    await deferEphemeral(interaction);
+
     if (!isPlatformOwner(interaction)) {
-      await interaction.reply({
-        content: '❌ Apenas o dono da plataforma (`BOT_OWNER_IDS`) pode gerar licenças.',
-        flags: EPHEMERAL
+      await interaction.editReply({
+        content:
+          '❌ Apenas o dono da plataforma pode gerar licenças.\n' +
+          'Configure `BOT_OWNER_IDS` com **seu ID Discord** na Discloud e redeploy.'
       });
       return;
     }
 
-    const periodo = interaction.options.getString('periodo');
-    const duration = DURATION_MAP[periodo];
-    const note = interaction.options.getString('nota');
+    try {
+      const periodo = interaction.options.getString('periodo');
+      const duration = DURATION_MAP[periodo];
+      const note = interaction.options.getString('nota');
 
-    await interaction.deferReply({ flags: EPHEMERAL });
+      const license = await client.services.licenses.generate({
+        duration,
+        createdByUserId: interaction.user.id,
+        note
+      });
 
-    const license = await client.services.licenses.generate({
-      duration,
-      createdByUserId: interaction.user.id,
-      note
-    });
-
-    await interaction.editReply({
-      content: [
-        `✅ Licença **${DURATION_LABELS[duration]}** criada.`,
-        '',
-        '```',
-        license.code,
-        '```',
-        '',
-        'Envie ao cliente para usar `/ativar`.'
-      ].join('\n')
-    });
+      await interaction.editReply({
+        content: [
+          `✅ Licença **${DURATION_LABELS[duration]}** criada.`,
+          '',
+          '```',
+          license.code,
+          '```',
+          '',
+          'Envie ao cliente para usar `/ativar`.'
+        ].join('\n')
+      });
+    } catch (err) {
+      client.logger.error({ err }, 'acesso command failed');
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err, 'Falha ao gerar licença.')}` });
+    }
   }
 };

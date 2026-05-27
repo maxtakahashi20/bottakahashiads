@@ -1,6 +1,7 @@
 const { Events } = require('discord.js');
 const { env } = require('../config/env');
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
+const { dbErrorMessage } = require('../utils/prismaSafe');
 
 module.exports = {
   name: Events.ClientReady,
@@ -12,14 +13,28 @@ module.exports = {
     client.logger.info({ user: client.user?.tag }, 'Bot ready');
 
     const platformOwner = env.inviteOwnerIds[0] || 'platform-system';
-    await client.services.tenants.bootstrapPlatform(platformOwner);
-    client.services.expiration.start();
+
+    try {
+      await client.services.tenants.bootstrapPlatform(platformOwner);
+    } catch (err) {
+      client.logger.error({ err }, `SaaS bootstrap: ${dbErrorMessage(err)}`);
+    }
+
+    try {
+      client.services.expiration.start();
+    } catch (err) {
+      client.logger.error({ err }, 'Expiration service falhou');
+    }
 
     client.services.status.start();
 
-    // Garante registro de todos os servidores onde o bot já está (tenant plataforma)
     for (const guild of client.guilds.cache.values()) {
-      await client.services.guildSettings.ensure(guild.id, PLATFORM_TENANT_ID);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await client.services.guildSettings.ensure(guild.id, PLATFORM_TENANT_ID);
+      } catch (err) {
+        client.logger.warn({ err, guildId: guild.id }, 'guildSettings.ensure falhou');
+      }
     }
 
     try {
@@ -38,10 +53,18 @@ module.exports = {
         .catch((err) => client.logger.error({ err }, 'Auditoria de tokens falhou'));
     }
 
-    await client.services.tenantCycles.bootstrap();
-    client.services.divulgationCycle =
-      client.services.tenantCycles.get(PLATFORM_TENANT_ID) ||
-      client.services.divulgationCycle;
+    try {
+      await client.services.tenantCycles.bootstrap();
+      client.services.divulgationCycle =
+        client.services.tenantCycles.get(PLATFORM_TENANT_ID) ||
+        client.services.divulgationCycle;
+    } catch (err) {
+      client.logger.error({ err }, 'Ciclos multi-tenant falharam ao iniciar');
+      const cfg = await client.services.tenantConfig?.get(PLATFORM_TENANT_ID).catch(() => null);
+      if (cfg?.botRunning !== false && client.services.divulgationCycle?.start) {
+        client.services.divulgationCycle.start();
+      }
+    }
 
     client.logger.info('SaaS: tenants, licenças e ciclos multi-tenant inicializados');
   }

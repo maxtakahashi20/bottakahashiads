@@ -1,6 +1,7 @@
 const { prisma } = require('../database/prisma');
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
 const { provisionTenant, ensurePlatformTenant } = require('../modules/tenants/tenantProvisioner');
+const { isMissingTableError } = require('../utils/prismaSafe');
 
 class TenantService {
   /**
@@ -16,17 +17,22 @@ class TenantService {
   }
 
   async getByOwner(userId) {
-    return prisma.tenant.findUnique({
-      where: { ownerUserId: userId },
-      include: {
-        settings: true,
-        subscriptions: {
-          where: { status: 'ACTIVE' },
-          orderBy: { endsAt: 'desc' },
-          take: 1
+    try {
+      return await prisma.tenant.findUnique({
+        where: { ownerUserId: userId },
+        include: {
+          settings: true,
+          subscriptions: {
+            where: { status: 'ACTIVE' },
+            orderBy: { endsAt: 'desc' },
+            take: 1
+          }
         }
-      }
-    });
+      });
+    } catch (err) {
+      if (isMissingTableError(err)) return null;
+      throw err;
+    }
   }
 
   async getById(tenantId) {

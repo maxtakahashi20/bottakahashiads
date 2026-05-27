@@ -23,20 +23,26 @@ function invalidateDivulgationCache() {
   divRunsCache = { runs: null, current: null, at: 0 };
 }
 
-async function collectPanelStats(client, { force = false } = {}) {
+async function collectPanelStats(client, { force = false, tenantId } = {}) {
+  const { PLATFORM_TENANT_ID, isPlatformScope } = require('./panelScope');
+  const tid = tenantId || PLATFORM_TENANT_ID;
+
   const now = Date.now();
-  if (!force && client.panelStatsCache?.data && now - client.panelStatsCache.at < CACHE_MS) {
+  const cacheKey = `${tid}:${force}`;
+  if (!force && client.panelStatsCache?.data && client.panelStatsCache.tenantId === tid && now - client.panelStatsCache.at < CACHE_MS) {
     return client.panelStatsCache.data;
   }
 
   const systemConfig = new SystemConfigService();
   const tokenSvc = client.services.userTokens;
+  const divRuns = new DivulgationRunService(tid);
 
-  const [cfg, { recentRuns, currentRun }, tokenCount, configuredServers] = await Promise.all([
-    systemConfig.get(),
-    getDivulgationSnapshot(client),
-    tokenSvc?.countActive() ?? 0,
-    client.services.partnerships.countConfigured()
+  const [cfg, currentRun, recentRuns, tokenCount, configuredServers] = await Promise.all([
+    isPlatformScope(tid) ? systemConfig.get() : client.services.tenantConfig.get(tid),
+    divRuns.getCurrent(),
+    divRuns.listRecent(5),
+    tokenSvc?.countActive(tid) ?? 0,
+    client.services.partnerships.countConfigured(tid)
   ]);
 
   let errorsTotal = recentRuns.reduce((a, r) => a + r.errorsCount, 0) + (currentRun?.errorsCount || 0);
@@ -64,7 +70,7 @@ async function collectPanelStats(client, { force = false } = {}) {
     lastSendAt: cfg.lastSendAt
   };
 
-  client.panelStatsCache = { data: stats, at: now };
+  client.panelStatsCache = { data: stats, at: now, tenantId: tid };
   return stats;
 }
 

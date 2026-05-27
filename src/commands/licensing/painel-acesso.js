@@ -1,8 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { EPHEMERAL, deferEphemeral } = require('../../utils/interaction');
+const { deferEphemeral } = require('../../utils/interaction');
 const { buildAdminAccessHome } = require('../../modules/licenses/adminAccessPanel');
 const { prisma } = require('../../database/prisma');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -10,28 +11,34 @@ module.exports = {
     .setDescription('(Dono) Painel administrativo de licenças e assinaturas.'),
 
   async execute(client, interaction) {
+    await deferEphemeral(interaction);
+
     if (!isPlatformOwner(interaction)) {
-      await interaction.reply({
-        content: '❌ Apenas o dono da plataforma pode abrir este painel.',
-        flags: EPHEMERAL
+      await interaction.editReply({
+        content:
+          '❌ Apenas o dono da plataforma pode abrir este painel.\n' +
+          'Configure `BOT_OWNER_IDS` na Discloud com seu ID Discord.'
       });
       return;
     }
 
-    await deferEphemeral(interaction);
+    try {
+      const [pending, activated, tenants, recent] = await Promise.all([
+        prisma.license.count({ where: { status: 'PENDING' } }),
+        prisma.license.count({ where: { status: 'ACTIVATED' } }),
+        prisma.tenant.count({ where: { isPlatform: false } }),
+        client.services.licenses.listRecent(8)
+      ]);
 
-    const [pending, activated, tenants, recent] = await Promise.all([
-      prisma.license.count({ where: { status: 'PENDING' } }),
-      prisma.license.count({ where: { status: 'ACTIVATED' } }),
-      prisma.tenant.count({ where: { isPlatform: false } }),
-      client.services.licenses.listRecent(8)
-    ]);
+      const payload = buildAdminAccessHome({
+        stats: { pending, activated, tenants },
+        recent
+      });
 
-    const payload = buildAdminAccessHome({
-      stats: { pending, activated, tenants },
-      recent
-    });
-
-    await interaction.editReply(payload);
+      await interaction.editReply(payload);
+    } catch (err) {
+      client.logger.error({ err }, 'painel-acesso failed');
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err)}` });
+    }
   }
 };

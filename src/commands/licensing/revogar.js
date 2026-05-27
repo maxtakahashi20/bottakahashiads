@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { EPHEMERAL } = require('../../utils/interaction');
+const { deferEphemeral } = require('../../utils/interaction');
 const { validateLicenseFormat } = require('../../modules/licenses/licenseValidators');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,32 +16,38 @@ module.exports = {
     ),
 
   async execute(client, interaction) {
+    await deferEphemeral(interaction);
+
     if (!isPlatformOwner(interaction)) {
-      await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
+      await interaction.editReply({ content: '❌ Sem permissão.' });
       return;
     }
 
     const raw = interaction.options.getString('codigo');
     const v = validateLicenseFormat(raw);
     if (!v.ok) {
-      await interaction.reply({ content: `❌ ${v.error}`, flags: EPHEMERAL });
+      await interaction.editReply({ content: `❌ ${v.error}` });
       return;
     }
 
-    const result = await client.services.licenses.revoke({
-      code: v.code,
-      revokedByUserId: interaction.user.id,
-      reason: interaction.options.getString('motivo')
-    });
+    try {
+      const result = await client.services.licenses.revoke({
+        code: v.code,
+        revokedByUserId: interaction.user.id,
+        reason: interaction.options.getString('motivo')
+      });
 
-    if (!result.ok) {
-      await interaction.reply({ content: `❌ ${result.error}`, flags: EPHEMERAL });
-      return;
+      if (!result.ok) {
+        await interaction.editReply({ content: `❌ ${result.error}` });
+        return;
+      }
+
+      await interaction.editReply({
+        content: `✅ Licença \`${result.license.code}\` revogada. Ambiente do cliente suspenso.`
+      });
+    } catch (err) {
+      client.logger.error({ err }, 'revogar command failed');
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err)}` });
     }
-
-    await interaction.reply({
-      content: `✅ Licença \`${result.license.code}\` revogada. Ambiente do cliente suspenso.`,
-      flags: EPHEMERAL
-    });
   }
 };

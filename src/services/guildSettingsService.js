@@ -1,5 +1,6 @@
 const { AdCategory } = require('@prisma/client');
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
+const { isSchemaMismatchError } = require('../utils/prismaSafe');
 
 class GuildSettingsService {
   /**
@@ -13,27 +14,59 @@ class GuildSettingsService {
     return { tenantId_guildId: { tenantId: tenantId || PLATFORM_TENANT_ID, guildId } };
   }
 
+  async _findLegacy(guildId, tenantId) {
+    return this.client.prisma.guildSettings.findFirst({
+      where: { guildId, tenantId: tenantId || PLATFORM_TENANT_ID }
+    });
+  }
+
   async ensure(guildId, tenantId = PLATFORM_TENANT_ID) {
     const tid = tenantId || PLATFORM_TENANT_ID;
-    return this.client.prisma.guildSettings.upsert({
-      where: this._key(tid, guildId),
-      create: { tenantId: tid, guildId, adsEnabled: true, allowedCategories: [] },
-      update: {}
-    });
+    try {
+      return await this.client.prisma.guildSettings.upsert({
+        where: this._key(tid, guildId),
+        create: { tenantId: tid, guildId, adsEnabled: true, allowedCategories: [] },
+        update: {}
+      });
+    } catch (err) {
+      if (!isSchemaMismatchError(err)) throw err;
+      const existing = await this._findLegacy(guildId, tid);
+      if (existing) return existing;
+      return this.client.prisma.guildSettings.create({
+        data: { tenantId: tid, guildId, adsEnabled: true, allowedCategories: [] }
+      });
+    }
   }
 
   async get(guildId, tenantId = PLATFORM_TENANT_ID) {
-    return this.client.prisma.guildSettings.findUnique({
-      where: this._key(tenantId, guildId)
-    });
+    const tid = tenantId || PLATFORM_TENANT_ID;
+    try {
+      return await this.client.prisma.guildSettings.findUnique({
+        where: this._key(tid, guildId)
+      });
+    } catch (err) {
+      if (!isSchemaMismatchError(err)) throw err;
+      return this._findLegacy(guildId, tid);
+    }
   }
 
   async update(guildId, patch, tenantId = PLATFORM_TENANT_ID) {
-    await this.ensure(guildId, tenantId);
-    return this.client.prisma.guildSettings.update({
-      where: this._key(tenantId, guildId),
-      data: patch
-    });
+    const tid = tenantId || PLATFORM_TENANT_ID;
+    await this.ensure(guildId, tid);
+    try {
+      return await this.client.prisma.guildSettings.update({
+        where: this._key(tid, guildId),
+        data: patch
+      });
+    } catch (err) {
+      if (!isSchemaMismatchError(err)) throw err;
+      const row = await this._findLegacy(guildId, tid);
+      if (!row) throw err;
+      return this.client.prisma.guildSettings.update({
+        where: { id: row.id },
+        data: patch
+      });
+    }
   }
 
   async countForTenant(tenantId) {
@@ -56,4 +89,3 @@ class GuildSettingsService {
 }
 
 module.exports = { GuildSettingsService };
-

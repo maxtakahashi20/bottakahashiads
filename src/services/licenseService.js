@@ -2,6 +2,7 @@ const { prisma } = require('../database/prisma');
 const { generateLicenseCode } = require('../modules/licenses/licenseCode');
 const { validateLicenseFormat } = require('../modules/licenses/licenseValidators');
 const { DURATION_LABELS } = require('../config/licensing');
+const { dbErrorMessage, isMissingTableError } = require('../utils/prismaSafe');
 
 const MAX_GEN_ATTEMPTS = 8;
 
@@ -14,36 +15,43 @@ class LicenseService {
   }
 
   async generate({ duration, createdByUserId, note = null }) {
-    let code = null;
-    for (let i = 0; i < MAX_GEN_ATTEMPTS; i++) {
-      const candidate = generateLicenseCode();
-      // eslint-disable-next-line no-await-in-loop
-      const exists = await prisma.license.findUnique({ where: { code: candidate } });
-      if (!exists) {
-        code = candidate;
-        break;
+    try {
+      let code = null;
+      for (let i = 0; i < MAX_GEN_ATTEMPTS; i++) {
+        const candidate = generateLicenseCode();
+        // eslint-disable-next-line no-await-in-loop
+        const exists = await prisma.license.findUnique({ where: { code: candidate } });
+        if (!exists) {
+          code = candidate;
+          break;
+        }
       }
+      if (!code) throw new Error('Não foi possível gerar código único. Tente novamente.');
+
+      const license = await prisma.license.create({
+        data: {
+          code,
+          duration,
+          status: 'PENDING',
+          createdByUserId,
+          note
+        }
+      });
+
+      await this.client.services.audit.write('license.created', {
+        actorId: createdByUserId,
+        target: code,
+        message: `Licença ${DURATION_LABELS[duration]}`,
+        meta: { duration, licenseId: license.id }
+      });
+
+      return license;
+    } catch (err) {
+      if (isMissingTableError(err)) {
+        throw new Error(dbErrorMessage(err));
+      }
+      throw err;
     }
-    if (!code) throw new Error('Não foi possível gerar código único. Tente novamente.');
-
-    const license = await prisma.license.create({
-      data: {
-        code,
-        duration,
-        status: 'PENDING',
-        createdByUserId,
-        note
-      }
-    });
-
-    await this.client.services.audit.write('license.created', {
-      actorId: createdByUserId,
-      target: code,
-      message: `Licença ${DURATION_LABELS[duration]}`,
-      meta: { duration, licenseId: license.id }
-    });
-
-    return license;
   }
 
   async findByCode(rawCode) {
@@ -146,11 +154,16 @@ class LicenseService {
   }
 
   async listRecent(limit = 15) {
-    return prisma.license.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      include: { tenant: { select: { ownerUserId: true, displayName: true } } }
-    });
+    try {
+      return await prisma.license.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        include: { tenant: { select: { ownerUserId: true, displayName: true } } }
+      });
+    } catch (err) {
+      if (isMissingTableError(err)) return [];
+      throw err;
+    }
   }
 
   async renewWithLicense({ code, userId }) {

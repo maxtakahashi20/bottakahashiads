@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { EPHEMERAL } = require('../../utils/interaction');
+const { deferEphemeral } = require('../../utils/interaction');
 const { validateLicenseFormat } = require('../../modules/licenses/licenseValidators');
 const { fmtDate } = require('../../modules/panel/panelFormat');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,23 +16,30 @@ module.exports = {
     const raw = interaction.options.getString('codigo');
     const v = validateLicenseFormat(raw);
     if (!v.ok) {
-      await interaction.reply({ content: `❌ ${v.error}`, flags: EPHEMERAL });
+      await deferEphemeral(interaction);
+      await interaction.editReply({ content: `❌ ${v.error}` });
       return;
     }
 
-    const result = await client.services.licenses.renewWithLicense({
-      code: v.code,
-      userId: interaction.user.id
-    });
+    await deferEphemeral(interaction);
 
-    if (!result.ok) {
-      await interaction.reply({ content: `❌ ${result.error}`, flags: EPHEMERAL });
-      return;
+    try {
+      const result = await client.services.licenses.renewWithLicense({
+        code: v.code,
+        userId: interaction.user.id
+      });
+
+      if (!result.ok) {
+        await interaction.editReply({ content: `❌ ${result.error}` });
+        return;
+      }
+
+      await interaction.editReply({
+        content: `✅ Plano renovado! Novo vencimento: **${fmtDate(result.endsAt)}**`
+      });
+    } catch (err) {
+      client.logger.error({ err }, 'renovar command failed');
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err)}` });
     }
-
-    await interaction.reply({
-      content: `✅ Plano renovado! Novo vencimento: **${fmtDate(result.endsAt)}**`,
-      flags: EPHEMERAL
-    });
   }
 };

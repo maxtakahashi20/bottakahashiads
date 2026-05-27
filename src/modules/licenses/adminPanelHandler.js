@@ -2,6 +2,7 @@ const { prisma } = require('../../database/prisma');
 const { isPlatformOwner } = require('../../utils/permissions');
 const { deferComponent, EPHEMERAL } = require('../../utils/interaction');
 const { buildAdminAccessHome, BTN } = require('./adminAccessPanel');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 async function handleAdminAccessButton(client, interaction) {
   const id = interaction.customId;
@@ -13,10 +14,22 @@ async function handleAdminAccessButton(client, interaction) {
   }
 
   if (id === BTN.LIST) {
-    await interaction.reply({
-      content: 'Use o comando `/licenses` para ver a lista completa.',
-      flags: EPHEMERAL
-    });
+    await deferComponent(interaction);
+    try {
+      const [pending, activated, tenants, recent] = await Promise.all([
+        prisma.license.count({ where: { status: 'PENDING' } }),
+        prisma.license.count({ where: { status: 'ACTIVATED' } }),
+        prisma.tenant.count({ where: { isPlatform: false } }),
+        client.services.licenses.listRecent(15)
+      ]);
+      const home = buildAdminAccessHome({
+        stats: { pending, activated, tenants },
+        recent
+      });
+      await interaction.editReply(home);
+    } catch (err) {
+      await interaction.editReply({ content: `❌ ${dbErrorMessage(err)}`, embeds: [], components: [] });
+    }
     return true;
   }
 
@@ -25,28 +38,37 @@ async function handleAdminAccessButton(client, interaction) {
 
   await deferComponent(interaction);
 
-  const license = await client.services.licenses.generate({
-    duration,
-    createdByUserId: interaction.user.id
-  });
+  try {
+    const license = await client.services.licenses.generate({
+      duration,
+      createdByUserId: interaction.user.id
+    });
 
-  const [pending, activated, tenants, recent] = await Promise.all([
-    prisma.license.count({ where: { status: 'PENDING' } }),
-    prisma.license.count({ where: { status: 'ACTIVATED' } }),
-    prisma.tenant.count({ where: { isPlatform: false } }),
-    client.services.licenses.listRecent(8)
-  ]);
+    const [pending, activated, tenants, recent] = await Promise.all([
+      prisma.license.count({ where: { status: 'PENDING' } }),
+      prisma.license.count({ where: { status: 'ACTIVATED' } }),
+      prisma.tenant.count({ where: { isPlatform: false } }),
+      client.services.licenses.listRecent(8)
+    ]);
 
-  const home = buildAdminAccessHome({
-    stats: { pending, activated, tenants },
-    recent
-  });
+    const home = buildAdminAccessHome({
+      stats: { pending, activated, tenants },
+      recent
+    });
 
-  await interaction.editReply({
-    content: `✅ Nova licença:\n\`\`\`${license.code}\`\`\``,
-    embeds: home.embeds,
-    components: home.components
-  });
+    await interaction.editReply({
+      content: `✅ Nova licença:\n\`\`\`${license.code}\`\`\``,
+      embeds: home.embeds,
+      components: home.components
+    });
+  } catch (err) {
+    client.logger.error({ err }, 'admin panel button failed');
+    await interaction.editReply({
+      content: `❌ ${dbErrorMessage(err)}`,
+      embeds: [],
+      components: []
+    });
+  }
 
   return true;
 }

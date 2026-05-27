@@ -3,7 +3,9 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 const { PANEL, MODAL, PREFIX } = require('./panelIds');
 const { collectPanelStats } = require('./panelStats');
@@ -26,7 +28,7 @@ const { DivulgationRunService } = require('../../services/divulgationRunService'
 const { isNetworkAdmin, isTokenOwner } = require('../../utils/permissions');
 const { deferComponent, deferEphemeral, EPHEMERAL, ephemeralFollowUp } = require('../../utils/interaction');
 const { fmtDate } = require('./panelFormat');
-const { DIVULGATION } = require('../../config/constants');
+const { DIVULGATION, BRAND } = require('../../config/constants');
 const { clampDelayMinutes, nextSendDate } = require('../../utils/divulgationLimits');
 const {
   getViewCache,
@@ -35,11 +37,25 @@ const {
   invalidatePanelCaches
 } = require('./panelCache');
 const { invalidateDivulgationCache } = require('./panelStats');
+const {
+  PanelContext,
+  getPanelTenant,
+  resolvePanelTenant,
+  requirePanelAccess,
+  requireTokenAccessForPanel
+} = require('./panelScope');
+const { dbErrorMessage } = require('../../utils/prismaSafe');
 
 function isPanelInteraction(interaction) {
   const id = interaction.customId || '';
-  return id.startsWith(PREFIX);
+  return id.startsWith(PREFIX) || id.startsWith('tn:tracking');
 }
+
+const LEGACY_TRACKING_MAP = {
+  'tn:tracking:add': PANEL.TRACKING_ADD,
+  'tn:tracking:view': PANEL.TRACKING_VIEW,
+  'tn:tracking:del': PANEL.TRACKING_DEL
+};
 
 async function requireAdmin(interaction) {
   if (!isNetworkAdmin(interaction)) {
@@ -69,12 +85,14 @@ async function requireTokenOwner(interaction) {
   return true;
 }
 
-async function renderHome(client, { force = false } = {}) {
-  let payload = !force ? getViewCache(client, 'home') : null;
+async function renderHome(client, { force = false, tenantId } = {}) {
+  const { PLATFORM_TENANT_ID } = require('./panelScope');
+  const tid = tenantId || PLATFORM_TENANT_ID;
+  let payload = !force ? getViewCache(client, 'home', tid) : null;
   if (!payload) {
-    const stats = await collectPanelStats(client, { force });
+    const stats = await collectPanelStats(client, { force, tenantId: tid });
     payload = buildHomePanel(stats);
-    setViewCache(client, 'home', payload);
+    setViewCache(client, 'home', payload, tid);
   }
   return payload;
 }
@@ -88,163 +106,231 @@ const MODAL_BUTTONS = new Set([
   PANEL.DIV_SELECT,
   PANEL.CYCLES_EDIT,
   PANEL.TOKEN_ADD,
-  PANEL.TOKEN_REMOVE
+  PANEL.TOKEN_REMOVE,
+  PANEL.TRACKING_ADD
 ]);
 
-async function handlePanelInteraction(client, interaction) {
-  if (!isPanelInteraction(interaction)) return false;
+async function handlePanelInteraction(client, interaction, overrideCustomId = null) {
+  const legacyTracking = LEGACY_TRACKING_MAP[interaction.customId];
+  if (!isPanelInteraction(interaction) && !overrideCustomId && !legacyTracking) return false;
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return false;
 
-  const opensModal = interaction.isButton() && MODAL_BUTTONS.has(interaction.customId);
-  if (!opensModal) {
-    await deferComponent(interaction);
-  }
+  const tenantId = await resolvePanelTenant(client, interaction);
+  const ctx = new PanelContext(client, tenantId);
+  const effectiveId = overrideCustomId || legacyTracking || interaction.customId;
+  const opensModal = interaction.isButton() && MODAL_BUTTONS.has(effectiveId);
 
-  if (!(await requireAdmin(interaction))) return true;
+  if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
+  if (!opensModal) await deferComponent(interaction);
 
-  const systemConfig = new SystemConfigService();
-  const divRuns = new DivulgationRunService();
-  const forceRefresh = interaction.isButton() && interaction.customId === PANEL.REFRESH;
+  try {
+  const forceRefresh = interaction.isButton() && effectiveId === PANEL.REFRESH;
 
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith(`${PANEL.DIV_SELECT}:menu`)) {
     const val = interaction.values[0];
-    const current = await divRuns.getCurrent();
+    const current = await ctx.divRuns.getCurrent();
     if (val === 'current' && current) {
       await interaction.editReply(buildDivulgationDetail(current, true));
       return true;
     }
-    const run = await divRuns.getByNumber(Number(val));
+    const run = await ctx.divRuns.getByNumber(Number(val));
     if (run) await interaction.editReply(buildDivulgationDetail(run, run.status === 'running'));
-    else await interaction.editReply(await renderHome(client));
+    else await interaction.editReply(await renderHome(client, { tenantId }));
     return true;
   }
 
   if (!interaction.isButton()) return false;
 
-  const id = interaction.customId;
+  const id = effectiveId;
 
   if (id === PANEL.BACK || id === PANEL.REFRESH || id === PANEL.HOME) {
-    let payload = !forceRefresh ? getViewCache(client, 'home') : null;
+    let payload = !forceRefresh ? getViewCache(client, 'home', tenantId) : null;
     if (!payload) {
-      const stats = await collectPanelStats(client, { force: forceRefresh });
+      const stats = await collectPanelStats(client, { force: forceRefresh, tenantId });
       payload = buildHomePanel(stats);
-      setViewCache(client, 'home', payload);
+      setViewCache(client, 'home', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.TOKENS) {
-    let payload = getViewCache(client, 'tokens');
+    let payload = getViewCache(client, 'tokens', tenantId);
     if (!payload) {
-      const rows = await client.services.userTokens.listForPanel();
+      const rows = await client.services.userTokens.listForPanel(tenantId);
       payload = buildTokensPanel(rows);
-      setViewCache(client, 'tokens', payload);
+      setViewCache(client, 'tokens', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.SERVERS) {
-    let payload = getViewCache(client, 'servers');
+    let payload = getViewCache(client, 'servers', tenantId);
     if (!payload) {
-      const rows = await getPartnerServerRows(client);
+      const rows = await getPartnerServerRows(client, { tenantId });
       payload = buildServersPanel(client, rows);
-      setViewCache(client, 'servers', payload);
+      setViewCache(client, 'servers', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.MESSAGE) {
-    let payload = getViewCache(client, 'message');
+    let payload = getViewCache(client, 'message', tenantId);
     if (!payload) {
       const [cfg, stats] = await Promise.all([
-        systemConfig.get(),
-        collectPanelStats(client)
+        ctx.getConfig(),
+        collectPanelStats(client, { tenantId })
       ]);
       payload = buildMessagePanel(cfg, stats.configuredServers);
-      setViewCache(client, 'message', payload);
+      setViewCache(client, 'message', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.TRACKING) {
-    await interaction.editReply(buildTrackingPanel());
+    const cfg = await ctx.getConfig();
+    await interaction.editReply(buildTrackingPanel(cfg));
+    return true;
+  }
+
+  if (id === PANEL.TRACKING_ADD) {
+    const cfg = await ctx.getConfig();
+    const modal = new ModalBuilder().setCustomId(MODAL.TRACKING_ADD).setTitle('Convite de Tracking');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('inviteUrl')
+          .setLabel('Link do convite Discord')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('https://discord.gg/...')
+          .setValue((cfg.globalInviteUrl || '').slice(0, 256))
+      )
+    );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  if (id === PANEL.TRACKING_VIEW) {
+    const cfg = await ctx.getConfig();
+    const invite = cfg.globalInviteUrl?.trim();
+    if (!invite) {
+      await interaction.editReply(buildTrackingPanel(cfg));
+      return true;
+    }
+    const detail = new EmbedBuilder()
+      .setColor(BRAND.color)
+      .setTitle('📊 Detalhes do Tracking')
+      .setDescription(
+        [
+          '**Convite principal** usado nas mensagens de divulgação:',
+          '',
+          invite,
+          '',
+          `**Configurado em:** ${cfg.updatedAt ? fmtDate(cfg.updatedAt) : '—'}`,
+          `**Bot:** ${cfg.botRunning ? '▶️ Ligado' : '⏸ Pausado'}`
+        ].join('\n')
+      )
+      .setTimestamp();
+    await interaction.editReply({
+      embeds: [detail],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(PANEL.BACK)
+            .setStyle(ButtonStyle.Secondary)
+            .setLabel('↩️ Voltar')
+        )
+      ]
+    });
+    return true;
+  }
+
+  if (id === PANEL.TRACKING_DEL) {
+    await ctx.updateConfig({ globalInviteUrl: null });
+    invalidatePanelCaches(client);
+    const cfg = await ctx.getConfig();
+    await interaction.editReply(buildTrackingPanel(cfg));
     return true;
   }
 
   if (id === PANEL.SCHEDULE) {
-    let payload = getViewCache(client, 'schedule');
+    let payload = getViewCache(client, 'schedule', tenantId);
     if (!payload) {
-      const cfg = await systemConfig.get();
+      const cfg = await ctx.getConfig();
       payload = buildSchedulePanel(cfg);
-      setViewCache(client, 'schedule', payload);
+      setViewCache(client, 'schedule', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.DIVULGATIONS) {
-    let payload = getViewCache(client, 'divulgations');
+    let payload = getViewCache(client, 'divulgations', tenantId);
     if (!payload) {
       const [runs, current] = await Promise.all([
-        divRuns.listRecent(10),
-        divRuns.getCurrent()
+        ctx.divRuns.listRecent(10),
+        ctx.divRuns.getCurrent()
       ]);
       payload = buildDivulgationsListPanel(runs, current);
-      setViewCache(client, 'divulgations', payload);
+      setViewCache(client, 'divulgations', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.LOGS) {
-    let payload = getViewCache(client, 'logs');
+    let payload = getViewCache(client, 'logs', tenantId);
     if (!payload) {
       const events = await client.prisma.logEvent.findMany({
         orderBy: { createdAt: 'desc' },
         take: 15
       });
       payload = buildLogsPanel(events);
-      setViewCache(client, 'logs', payload);
+      setViewCache(client, 'logs', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.CYCLES) {
-    let payload = getViewCache(client, 'cycles');
+    let payload = getViewCache(client, 'cycles', tenantId);
     if (!payload) {
-      const cfg = await systemConfig.get();
+      const cfg = await ctx.getConfig();
       payload = buildCyclesPanel(cfg);
-      setViewCache(client, 'cycles', payload);
+      setViewCache(client, 'cycles', payload, tenantId);
     }
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.STOP) {
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     const next = !cfg.botRunning;
-    await systemConfig.update({ botRunning: next });
+    await ctx.updateConfig({ botRunning: next });
     invalidatePanelCaches(client);
     invalidateDivulgationCache();
     if (!next) client.services.adsQueue.clearQueue();
-    if (client.services.divulgationCycle) {
-      if (next) client.services.divulgationCycle.start({ burst: true });
-      else client.services.divulgationCycle.stop();
-    }
-    const stats = await collectPanelStats(client, { force: true });
+    if (next) ctx.startCycle({ burst: true });
+    else ctx.stopCycle();
+    const stats = await collectPanelStats(client, { force: true, tenantId });
     const payload = buildHomePanel(stats);
-    setViewCache(client, 'home', payload);
+    setViewCache(client, 'home', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.TOKEN_ADD) {
-    if (!(await requireTokenOwner(interaction))) return true;
+    if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
+      await interaction.reply({
+        content: '❌ Sem permissão para gerenciar tokens.',
+        flags: EPHEMERAL
+      });
+      return true;
+    }
     const modal = new ModalBuilder().setCustomId(MODAL.TOKEN_ADD).setTitle('Adicionar Token');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -261,7 +347,13 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.TOKEN_REMOVE) {
-    if (!(await requireTokenOwner(interaction))) return true;
+    if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
+      await interaction.reply({
+        content: '❌ Sem permissão para gerenciar tokens.',
+        flags: EPHEMERAL
+      });
+      return true;
+    }
     const modal = new ModalBuilder().setCustomId(MODAL.TOKEN_REMOVE).setTitle('Remover Token');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -355,14 +447,15 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.SERVER_SEND_NOW) {
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     if (!cfg.botRunning) {
       await ephemeralFollowUp(interaction, {
         content: '⚠️ Ligue o bot no painel (**Iniciar Bot**) ou envie após configurar um servidor.'
       });
       return true;
     }
-    const send = await client.services.divulgationCycle.sendImmediate();
+    const cycle = ctx.getCycle() || ctx.startCycle();
+    const send = cycle ? await cycle.sendImmediate() : { sent: 0, reason: 'Ciclo indisponível' };
     invalidatePanelCaches(client);
     const detail =
       send?.reason ||
@@ -373,30 +466,32 @@ async function handlePanelInteraction(client, interaction) {
         ? `🚀 **${send.sent}** mensagem(ns) enviada(s)! Próximos envios no intervalo configurado.`
         : `⚠️ **Falha:** ${detail}`;
     await ephemeralFollowUp(interaction, { content: msg });
-    const rows = await getPartnerServerRows(client, { force: true });
+    const rows = await getPartnerServerRows(client, { force: true, tenantId });
     const payload = buildServersPanel(client, rows);
-    setViewCache(client, 'servers', payload);
+    setViewCache(client, 'servers', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.SERVER_RESET_NEXT) {
-    const rows = await getPartnerServerRows(client);
+    const rows = await getPartnerServerRows(client, { tenantId });
     for (const s of rows) {
-      await client.services.guildSettings.update(s.guildId, {
-        nextSendAt: nextSendDate(s.delayMinutes)
-      });
+      await client.services.guildSettings.update(
+        s.guildId,
+        { nextSendAt: nextSendDate(s.delayMinutes) },
+        tenantId
+      );
     }
     invalidatePanelCaches(client);
-    const fresh = await getPartnerServerRows(client, { force: true });
+    const fresh = await getPartnerServerRows(client, { force: true, tenantId });
     const payload = buildServersPanel(client, fresh);
-    setViewCache(client, 'servers', payload);
+    setViewCache(client, 'servers', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.MSG_EDIT_GLOBAL) {
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     const modal = new ModalBuilder().setCustomId(MODAL.MSG_GLOBAL).setTitle('Editar Mensagem Global');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -413,18 +508,18 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.MSG_DEFAULT) {
-    await systemConfig.update({ globalMessage: null });
+    await ctx.updateConfig({ globalMessage: null });
     invalidatePanelCaches(client);
-    const cfg = await systemConfig.get();
-    const stats = await collectPanelStats(client, { force: true });
+    const cfg = await ctx.getConfig();
+    const stats = await collectPanelStats(client, { force: true, tenantId });
     const payload = buildMessagePanel(cfg, stats.configuredServers);
-    setViewCache(client, 'message', payload);
+    setViewCache(client, 'message', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.MSG_FULL) {
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     await interaction.editReply(buildGlobalMessageFull(cfg));
     return true;
   }
@@ -446,25 +541,25 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.SCHEDULE_CANCEL) {
-    await systemConfig.update({ scheduledAt: null });
+    await ctx.updateConfig({ scheduledAt: null });
     invalidatePanelCaches(client);
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     const payload = buildSchedulePanel(cfg);
-    setViewCache(client, 'schedule', payload);
+    setViewCache(client, 'schedule', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
   if (id === PANEL.DIV_CLEAR) {
-    await divRuns.clearHistory();
+    await ctx.divRuns.clearHistory();
     invalidateDivulgationCache();
     invalidatePanelCaches(client);
     const [runs, current] = await Promise.all([
-      divRuns.listRecent(10),
-      divRuns.getCurrent()
+      ctx.divRuns.listRecent(10),
+      ctx.divRuns.getCurrent()
     ]);
     const payload = buildDivulgationsListPanel(runs, current);
-    setViewCache(client, 'divulgations', payload);
+    setViewCache(client, 'divulgations', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
@@ -486,7 +581,7 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.CYCLES_EDIT) {
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     const modal = new ModalBuilder().setCustomId(MODAL.CYCLES).setTitle('Editar Ciclos');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
@@ -527,7 +622,7 @@ async function handlePanelInteraction(client, interaction) {
   }
 
   if (id === PANEL.CYCLES_RESET) {
-    await systemConfig.update({
+    await ctx.updateConfig({
       messagesPerCycle: 1,
       delayMsgMinSec: 2,
       delayMsgMaxSec: 5,
@@ -536,14 +631,27 @@ async function handlePanelInteraction(client, interaction) {
       minCycleMinutes: DIVULGATION.minIntervalMinutes
     });
     invalidatePanelCaches(client);
-    const cfg = await systemConfig.get();
+    const cfg = await ctx.getConfig();
     const payload = buildCyclesPanel(cfg);
-    setViewCache(client, 'cycles', payload);
+    setViewCache(client, 'cycles', payload, tenantId);
     await interaction.editReply(payload);
     return true;
   }
 
-  return false;
+  await interaction.editReply({
+    content: '⚠️ Ação não reconhecida. Use **Atualizar** ou `/painel`.',
+    embeds: [],
+    components: []
+  });
+  return true;
+  } catch (err) {
+    client.logger.error({ err, customId: interaction.customId, tenantId }, 'Panel button failed');
+    const msg = dbErrorMessage(err, 'Erro ao processar o painel.');
+    await interaction
+      .editReply({ content: `❌ ${msg}`, embeds: [], components: [] })
+      .catch(() => {});
+    return true;
+  }
 }
 
 function parseScheduleDate(raw) {
@@ -565,11 +673,12 @@ function parseRange(raw, fallback) {
 async function handlePanelModal(client, interaction) {
   const id = interaction.customId;
   if (!id.startsWith(PREFIX)) return false;
-  if (!(await requireAdmin(interaction))) return true;
 
-  const systemConfig = new SystemConfigService();
-  const divRuns = new DivulgationRunService();
+  const tenantId = await resolvePanelTenant(client, interaction);
+  const ctx = new PanelContext(client, tenantId);
+  if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
 
+  try {
   if (id === MODAL.SERVER_ADD) {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
     const channelId = interaction.fields.getTextInputValue('channelId').trim();
@@ -586,31 +695,36 @@ async function handlePanelModal(client, interaction) {
 
     await deferEphemeral(interaction);
 
-    const access = await client.services.userTokens.validatePartnerTarget(channelId, guildId);
+    const access = await client.services.userTokens.validatePartnerTarget(channelId, guildId, tenantId);
     if (!access.ok) {
       await interaction.editReply({ content: `❌ ${access.error}` });
       return true;
     }
 
     const delayMinutes = clampDelayMinutes(delayMin);
-    await client.services.guildSettings.ensure(guildId);
-    await client.services.guildSettings.update(guildId, {
-      adsEnabled: true,
-      adsChannelId: channelId,
-      partnerGuildName: access.guildName,
-      delayMinutes,
-      customMessage: customMsg,
-      nextSendAt: null
-    });
+    await client.services.guildSettings.ensure(guildId, tenantId);
+    await client.services.guildSettings.update(
+      guildId,
+      {
+        adsEnabled: true,
+        adsChannelId: channelId,
+        partnerGuildName: access.guildName,
+        delayMinutes,
+        customMessage: customMsg,
+        nextSendAt: null
+      },
+      tenantId
+    );
 
     invalidatePanelCaches(client);
     const nome = access.guildName ? `**${access.guildName}**` : `\`${guildId}\``;
 
-    const send = await client.services.divulgationCycle.sendImmediate([guildId], {
-      skipNetworkCheck: false
-    });
+    const cycle = ctx.getCycle() || ctx.startCycle();
+    const send = cycle
+      ? await cycle.sendImmediate([guildId], { skipNetworkCheck: false })
+      : { sent: 0, reason: 'Ciclo indisponível' };
 
-    const settingsAfter = await client.services.guildSettings.get(guildId);
+    const settingsAfter = await client.services.guildSettings.get(guildId, tenantId);
     const nextLabel = settingsAfter?.nextSendAt
       ? fmtDate(settingsAfter.nextSendAt)
       : nextSendDate(delayMinutes).toLocaleString('pt-BR');
@@ -639,11 +753,11 @@ async function handlePanelModal(client, interaction) {
 
   if (id === 'tn:painel:modal:server_remove') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
-    await client.services.guildSettings.update(guildId, {
-      adsChannelId: null,
-      customMessage: null,
-      nextSendAt: null
-    });
+    await client.services.guildSettings.update(
+      guildId,
+      { adsChannelId: null, customMessage: null, nextSendAt: null },
+      tenantId
+    );
     invalidatePanelCaches(client);
     await interaction.reply({ content: '✅ Canal de divulgação removido.', flags: EPHEMERAL });
     return true;
@@ -652,7 +766,7 @@ async function handlePanelModal(client, interaction) {
   if (id === 'tn:painel:modal:server_msg') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
     const customMsg = interaction.fields.getTextInputValue('customMsg')?.trim() || null;
-    await client.services.guildSettings.update(guildId, { customMessage: customMsg });
+    await client.services.guildSettings.update(guildId, { customMessage: customMsg }, tenantId);
     invalidatePanelCaches(client);
     await interaction.reply({ content: '✅ Mensagem do servidor atualizada.', flags: EPHEMERAL });
     return true;
@@ -660,9 +774,24 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.MSG_GLOBAL) {
     const message = interaction.fields.getTextInputValue('message');
-    await systemConfig.update({ globalMessage: message });
+    await ctx.updateConfig({ globalMessage: message });
     invalidatePanelCaches(client);
     await interaction.reply({ content: '✅ Mensagem global salva.', flags: EPHEMERAL });
+    return true;
+  }
+
+  if (id === MODAL.TRACKING_ADD) {
+    const inviteUrl = interaction.fields.getTextInputValue('inviteUrl').trim();
+    if (!/^https?:\/\//i.test(inviteUrl) && !inviteUrl.includes('discord.gg')) {
+      await interaction.reply({
+        content: '❌ Informe um link válido (ex: `https://discord.gg/seu-servidor`).',
+        flags: EPHEMERAL
+      });
+      return true;
+    }
+    await ctx.updateConfig({ globalInviteUrl: inviteUrl });
+    invalidatePanelCaches(client);
+    await interaction.reply({ content: '✅ Convite de tracking salvo.', flags: EPHEMERAL });
     return true;
   }
 
@@ -672,7 +801,7 @@ async function handlePanelModal(client, interaction) {
       await interaction.reply({ content: '❌ Data/hora inválida ou no passado.', flags: EPHEMERAL });
       return true;
     }
-    await systemConfig.update({ scheduledAt: dt });
+    await ctx.updateConfig({ scheduledAt: dt });
     invalidatePanelCaches(client);
     await interaction.reply({ content: `✅ Agendado para ${fmtDate(dt)}`, flags: EPHEMERAL });
     return true;
@@ -687,7 +816,7 @@ async function handlePanelModal(client, interaction) {
       Number.isFinite(rawMin) ? rawMin : DIVULGATION.minIntervalMinutes
     );
 
-    await systemConfig.update({
+    await ctx.updateConfig({
       messagesPerCycle,
       delayMsgMinSec: msgR.min,
       delayMsgMaxSec: msgR.max,
@@ -707,7 +836,7 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.DIV_NUMBER) {
     const num = Number(interaction.fields.getTextInputValue('number'));
-    const run = await divRuns.getByNumber(num);
+    const run = await ctx.divRuns.getByNumber(num);
     if (!run) {
       await interaction.reply({ content: '❌ Divulgação não encontrada.', flags: EPHEMERAL });
       return true;
@@ -718,13 +847,17 @@ async function handlePanelModal(client, interaction) {
   }
 
   if (id === MODAL.TOKEN_ADD) {
-    if (!(await requireTokenOwner(interaction))) return true;
+    if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
+      await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
+      return true;
+    }
     await deferEphemeral(interaction);
     try {
       const raw = interaction.fields.getTextInputValue('token');
       const result = await client.services.userTokens.addToken({
         rawToken: raw,
-        ownerId: interaction.user.id
+        ownerId: interaction.user.id,
+        tenantId
       });
       invalidatePanelCaches(client);
       const label = result.updated ? 'atualizado' : 'adicionado';
@@ -738,10 +871,13 @@ async function handlePanelModal(client, interaction) {
   }
 
   if (id === MODAL.TOKEN_REMOVE) {
-    if (!(await requireTokenOwner(interaction))) return true;
+    if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
+      await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
+      return true;
+    }
     await deferEphemeral(interaction);
     const slot = interaction.fields.getTextInputValue('slot');
-    const ok = await client.services.userTokens.removeBySlot(slot);
+    const ok = await client.services.userTokens.removeBySlot(slot, tenantId);
     invalidatePanelCaches(client);
     await interaction.editReply({
       content: ok ? `✅ Token **#${slot}** removido.` : `❌ Token **#${slot}** não encontrado.`
@@ -750,6 +886,16 @@ async function handlePanelModal(client, interaction) {
   }
 
   return false;
+  } catch (err) {
+    client.logger.error({ err, customId: id, tenantId }, 'Panel modal failed');
+    const msg = dbErrorMessage(err, 'Erro ao salvar.');
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content: `❌ ${msg}` }).catch(() => {});
+    } else {
+      await interaction.reply({ content: `❌ ${msg}`, flags: EPHEMERAL }).catch(() => {});
+    }
+    return true;
+  }
 }
 
 module.exports = { handlePanelInteraction, handlePanelModal, renderHome, isPanelInteraction };
