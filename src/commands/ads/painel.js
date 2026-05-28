@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { renderHome } = require('../../modules/panel/panelHandler');
+const { stampPanelPayload } = require('../../modules/panel/panelUpdate');
 const { isNetworkAdmin, isPlatformOwner } = require('../../utils/permissions');
 const { EPHEMERAL } = require('../../utils/interaction');
 const { resolveTenantContext } = require('../../utils/tenantContext');
@@ -23,21 +24,21 @@ module.exports = {
     const platformOwner = isPlatformOwner(interaction);
     if (platformOwner) {
       setPanelTenant(interaction.user.id, PLATFORM_TENANT_ID);
-      const view = await renderHome(client, { tenantId: PLATFORM_TENANT_ID });
+      const view = stampPanelPayload(await renderHome(client, { tenantId: PLATFORM_TENANT_ID }));
       await interaction.editReply(view);
       return;
     }
 
     if (ctx.isActiveClient) {
       setPanelTenant(interaction.user.id, ctx.tenant.id);
-      const view = await renderHome(client, { tenantId: ctx.tenant.id });
+      const view = stampPanelPayload(await renderHome(client, { tenantId: ctx.tenant.id }));
       await interaction.editReply(view);
       return;
     }
 
     if (isNetworkAdmin(interaction)) {
       setPanelTenant(interaction.user.id, PLATFORM_TENANT_ID);
-      const view = await renderHome(client, { tenantId: PLATFORM_TENANT_ID });
+      const view = stampPanelPayload(await renderHome(client, { tenantId: PLATFORM_TENANT_ID }));
       await interaction.editReply(view);
       return;
     }

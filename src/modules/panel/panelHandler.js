@@ -26,13 +26,11 @@ const {
 const { SystemConfigService } = require('../../services/systemConfigService');
 const { DivulgationRunService } = require('../../services/divulgationRunService');
 const { isNetworkAdmin, isTokenOwner } = require('../../utils/permissions');
-const { deferComponent, deferEphemeral, EPHEMERAL, ephemeralFollowUp } = require('../../utils/interaction');
+const { deferComponent, EPHEMERAL, ephemeralFollowUp } = require('../../utils/interaction');
 const { fmtDate } = require('./panelFormat');
 const { DIVULGATION, BRAND } = require('../../config/constants');
 const { clampDelayMinutes, nextSendDate } = require('../../utils/divulgationLimits');
 const {
-  getViewCache,
-  setViewCache,
   getPartnerServerRows,
   invalidatePanelCaches
 } = require('./panelCache');
@@ -45,6 +43,7 @@ const {
   requireTokenAccessForPanel
 } = require('./panelScope');
 const { dbErrorMessage } = require('../../utils/prismaSafe');
+const { refreshPanelMessage, refreshPanelAfterModal, deferModalPanel } = require('./panelUpdate');
 
 function isPanelInteraction(interaction) {
   const id = interaction.customId || '';
@@ -85,16 +84,49 @@ async function requireTokenOwner(interaction) {
   return true;
 }
 
-async function renderHome(client, { force = false, tenantId } = {}) {
+async function renderHome(client, { force = true, tenantId } = {}) {
   const { PLATFORM_TENANT_ID } = require('./panelScope');
   const tid = tenantId || PLATFORM_TENANT_ID;
-  let payload = !force ? getViewCache(client, 'home', tid) : null;
-  if (!payload) {
-    const stats = await collectPanelStats(client, { force, tenantId: tid });
-    payload = buildHomePanel(stats);
-    setViewCache(client, 'home', payload, tid);
-  }
-  return payload;
+  const stats = await collectPanelStats(client, { force, tenantId: tid });
+  return buildHomePanel(stats);
+}
+
+async function renderTokensView(client, tenantId) {
+  const rows = await client.services.userTokens.listForPanel(tenantId);
+  return buildTokensPanel(rows);
+}
+
+async function renderServersView(client, tenantId) {
+  const rows = await getPartnerServerRows(client, { force: true, tenantId });
+  return buildServersPanel(client, rows);
+}
+
+async function renderMessageView(client, ctx, tenantId) {
+  const [cfg, stats] = await Promise.all([ctx.getConfig(), collectPanelStats(client, { force: true, tenantId })]);
+  return buildMessagePanel(cfg, stats.configuredServers);
+}
+
+async function renderScheduleView(ctx) {
+  const cfg = await ctx.getConfig();
+  return buildSchedulePanel(cfg);
+}
+
+async function renderDivulgationsView(ctx) {
+  const [runs, current] = await Promise.all([ctx.divRuns.listRecent(10), ctx.divRuns.getCurrent()]);
+  return buildDivulgationsListPanel(runs, current);
+}
+
+async function renderLogsView(client) {
+  const events = await client.prisma.logEvent.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 15
+  });
+  return buildLogsPanel(events);
+}
+
+async function renderCyclesView(ctx) {
+  const cfg = await ctx.getConfig();
+  return buildCyclesPanel(cfg);
 }
 
 const MODAL_BUTTONS = new Set([
@@ -311,17 +343,18 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
 
   try {
   const forceRefresh = interaction.isButton() && effectiveId === PANEL.REFRESH;
+  if (forceRefresh) invalidatePanelCaches(client);
 
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith(`${PANEL.DIV_SELECT}:menu`)) {
     const val = interaction.values[0];
     const current = await ctx.divRuns.getCurrent();
     if (val === 'current' && current) {
-      await interaction.editReply(buildDivulgationDetail(current, true));
+      await refreshPanelMessage(interaction, buildDivulgationDetail(current, true));
       return true;
     }
     const run = await ctx.divRuns.getByNumber(Number(val));
-    if (run) await interaction.editReply(buildDivulgationDetail(run, run.status === 'running'));
-    else await interaction.editReply(await renderHome(client, { tenantId }));
+    if (run) await refreshPanelMessage(interaction, buildDivulgationDetail(run, run.status === 'running'));
+    else await refreshPanelMessage(interaction, await renderHome(client, { tenantId }));
     return true;
   }
 
@@ -330,55 +363,28 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
   const id = effectiveId;
 
   if (id === PANEL.BACK || id === PANEL.REFRESH || id === PANEL.HOME) {
-    let payload = !forceRefresh ? getViewCache(client, 'home', tenantId) : null;
-    if (!payload) {
-      const stats = await collectPanelStats(client, { force: forceRefresh, tenantId });
-      payload = buildHomePanel(stats);
-      setViewCache(client, 'home', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderHome(client, { tenantId }));
     return true;
   }
 
   if (id === PANEL.TOKENS) {
-    let payload = getViewCache(client, 'tokens', tenantId);
-    if (!payload) {
-      const rows = await client.services.userTokens.listForPanel(tenantId);
-      payload = buildTokensPanel(rows);
-      setViewCache(client, 'tokens', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderTokensView(client, tenantId));
     return true;
   }
 
   if (id === PANEL.SERVERS) {
-    let payload = getViewCache(client, 'servers', tenantId);
-    if (!payload) {
-      const rows = await getPartnerServerRows(client, { tenantId });
-      payload = buildServersPanel(client, rows);
-      setViewCache(client, 'servers', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderServersView(client, tenantId));
     return true;
   }
 
   if (id === PANEL.MESSAGE) {
-    let payload = getViewCache(client, 'message', tenantId);
-    if (!payload) {
-      const [cfg, stats] = await Promise.all([
-        ctx.getConfig(),
-        collectPanelStats(client, { tenantId })
-      ]);
-      payload = buildMessagePanel(cfg, stats.configuredServers);
-      setViewCache(client, 'message', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderMessageView(client, ctx, tenantId));
     return true;
   }
 
   if (id === PANEL.TRACKING) {
     const cfg = await ctx.getConfig();
-    await interaction.editReply(buildTrackingPanel(cfg));
+    await refreshPanelMessage(interaction, buildTrackingPanel(cfg));
     return true;
   }
 
@@ -404,7 +410,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
     const cfg = await ctx.getConfig();
     const invite = cfg.globalInviteUrl?.trim();
     if (!invite) {
-      await interaction.editReply(buildTrackingPanel(cfg));
+      await refreshPanelMessage(interaction, buildTrackingPanel(cfg));
       return true;
     }
     const detail = new EmbedBuilder()
@@ -421,7 +427,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
         ].join('\n')
       )
       .setTimestamp();
-    await interaction.editReply({
+    await refreshPanelMessage(interaction, {
       embeds: [detail],
       components: [
         new ActionRowBuilder().addComponents(
@@ -439,57 +445,27 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
     await ctx.updateConfig({ globalInviteUrl: null });
     invalidatePanelCaches(client);
     const cfg = await ctx.getConfig();
-    await interaction.editReply(buildTrackingPanel(cfg));
+    await refreshPanelMessage(interaction, buildTrackingPanel(cfg));
     return true;
   }
 
   if (id === PANEL.SCHEDULE) {
-    let payload = getViewCache(client, 'schedule', tenantId);
-    if (!payload) {
-      const cfg = await ctx.getConfig();
-      payload = buildSchedulePanel(cfg);
-      setViewCache(client, 'schedule', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderScheduleView(ctx));
     return true;
   }
 
   if (id === PANEL.DIVULGATIONS) {
-    let payload = getViewCache(client, 'divulgations', tenantId);
-    if (!payload) {
-      const [runs, current] = await Promise.all([
-        ctx.divRuns.listRecent(10),
-        ctx.divRuns.getCurrent()
-      ]);
-      payload = buildDivulgationsListPanel(runs, current);
-      setViewCache(client, 'divulgations', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderDivulgationsView(ctx));
     return true;
   }
 
   if (id === PANEL.LOGS) {
-    let payload = getViewCache(client, 'logs', tenantId);
-    if (!payload) {
-      const events = await client.prisma.logEvent.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 15
-      });
-      payload = buildLogsPanel(events);
-      setViewCache(client, 'logs', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderLogsView(client));
     return true;
   }
 
   if (id === PANEL.CYCLES) {
-    let payload = getViewCache(client, 'cycles', tenantId);
-    if (!payload) {
-      const cfg = await ctx.getConfig();
-      payload = buildCyclesPanel(cfg);
-      setViewCache(client, 'cycles', payload, tenantId);
-    }
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderCyclesView(ctx));
     return true;
   }
 
@@ -502,10 +478,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
     if (!next) client.services.adsQueue.clearQueue();
     if (next) ctx.startCycle({ burst: true });
     else ctx.stopCycle();
-    const stats = await collectPanelStats(client, { force: true, tenantId });
-    const payload = buildHomePanel(stats);
-    setViewCache(client, 'home', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderHome(client, { tenantId }));
     return true;
   }
 
@@ -654,15 +627,12 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
         ? `🚀 **${send.sent}** mensagem(ns) enviada(s)! Próximos envios no intervalo configurado.`
         : `⚠️ **Falha:** ${detail}`;
     await ephemeralFollowUp(interaction, { content: msg });
-    const rows = await getPartnerServerRows(client, { force: true, tenantId });
-    const payload = buildServersPanel(client, rows);
-    setViewCache(client, 'servers', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderServersView(client, tenantId));
     return true;
   }
 
   if (id === PANEL.SERVER_RESET_NEXT) {
-    const rows = await getPartnerServerRows(client, { tenantId });
+    const rows = await getPartnerServerRows(client, { force: true, tenantId });
     for (const s of rows) {
       await client.services.guildSettings.update(
         s.guildId,
@@ -671,10 +641,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
       );
     }
     invalidatePanelCaches(client);
-    const fresh = await getPartnerServerRows(client, { force: true, tenantId });
-    const payload = buildServersPanel(client, fresh);
-    setViewCache(client, 'servers', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderServersView(client, tenantId));
     return true;
   }
 
@@ -698,17 +665,13 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
   if (id === PANEL.MSG_DEFAULT) {
     await ctx.updateConfig({ globalMessage: null });
     invalidatePanelCaches(client);
-    const cfg = await ctx.getConfig();
-    const stats = await collectPanelStats(client, { force: true, tenantId });
-    const payload = buildMessagePanel(cfg, stats.configuredServers);
-    setViewCache(client, 'message', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderMessageView(client, ctx, tenantId));
     return true;
   }
 
   if (id === PANEL.MSG_FULL) {
     const cfg = await ctx.getConfig();
-    await interaction.editReply(buildGlobalMessageFull(cfg));
+    await refreshPanelMessage(interaction, buildGlobalMessageFull(cfg));
     return true;
   }
 
@@ -731,10 +694,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
   if (id === PANEL.SCHEDULE_CANCEL) {
     await ctx.updateConfig({ scheduledAt: null });
     invalidatePanelCaches(client);
-    const cfg = await ctx.getConfig();
-    const payload = buildSchedulePanel(cfg);
-    setViewCache(client, 'schedule', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderScheduleView(ctx));
     return true;
   }
 
@@ -742,13 +702,7 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
     await ctx.divRuns.clearHistory();
     invalidateDivulgationCache();
     invalidatePanelCaches(client);
-    const [runs, current] = await Promise.all([
-      ctx.divRuns.listRecent(10),
-      ctx.divRuns.getCurrent()
-    ]);
-    const payload = buildDivulgationsListPanel(runs, current);
-    setViewCache(client, 'divulgations', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderDivulgationsView(ctx));
     return true;
   }
 
@@ -819,14 +773,11 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
       minCycleMinutes: DIVULGATION.minIntervalMinutes
     });
     invalidatePanelCaches(client);
-    const cfg = await ctx.getConfig();
-    const payload = buildCyclesPanel(cfg);
-    setViewCache(client, 'cycles', payload, tenantId);
-    await interaction.editReply(payload);
+    await refreshPanelMessage(interaction, await renderCyclesView(ctx));
     return true;
   }
 
-  await interaction.editReply({
+  await refreshPanelMessage(interaction, {
     content: '⚠️ Ação não reconhecida. Use **Atualizar** ou `/painel`.',
     embeds: [],
     components: []
@@ -881,11 +832,13 @@ async function handlePanelModal(client, interaction) {
       return true;
     }
 
-    await deferEphemeral(interaction);
+    await deferModalPanel(interaction);
 
     const access = await client.services.userTokens.validatePartnerTarget(channelId, guildId, tenantId);
     if (!access.ok) {
-      await interaction.editReply({ content: `❌ ${access.error}` });
+      await refreshPanelAfterModal(interaction, await renderServersView(client, tenantId), {
+        notice: `❌ ${access.error}`
+      });
       return true;
     }
 
@@ -935,36 +888,47 @@ async function handlePanelModal(client, interaction) {
 
     lines.push(`⏱ Próximo envio automático: **${nextLabel}** (a cada **${delayMinutes}** min).`);
 
-    await interaction.editReply({ content: lines.join('\n') });
+    await refreshPanelAfterModal(interaction, await renderServersView(client, tenantId), {
+      notice: lines.join('\n')
+    });
     return true;
   }
 
   if (id === 'tn:painel:modal:server_remove') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
+    await deferModalPanel(interaction);
     await client.services.guildSettings.update(
       guildId,
       { adsChannelId: null, customMessage: null, nextSendAt: null },
       tenantId
     );
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Canal de divulgação removido.', flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, await renderServersView(client, tenantId), {
+      notice: '✅ Canal de divulgação removido.'
+    });
     return true;
   }
 
   if (id === 'tn:painel:modal:server_msg') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
     const customMsg = interaction.fields.getTextInputValue('customMsg')?.trim() || null;
+    await deferModalPanel(interaction);
     await client.services.guildSettings.update(guildId, { customMessage: customMsg }, tenantId);
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Mensagem do servidor atualizada.', flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, await renderServersView(client, tenantId), {
+      notice: '✅ Mensagem do servidor atualizada.'
+    });
     return true;
   }
 
   if (id === MODAL.MSG_GLOBAL) {
     const message = interaction.fields.getTextInputValue('message');
+    await deferModalPanel(interaction);
     await ctx.updateConfig({ globalMessage: message });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Mensagem global salva.', flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, await renderMessageView(client, ctx, tenantId), {
+      notice: '✅ Mensagem global salva.'
+    });
     return true;
   }
 
@@ -977,9 +941,13 @@ async function handlePanelModal(client, interaction) {
       });
       return true;
     }
+    await deferModalPanel(interaction);
     await ctx.updateConfig({ globalInviteUrl: inviteUrl });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: '✅ Convite de tracking salvo.', flags: EPHEMERAL });
+    const cfg = await ctx.getConfig();
+    await refreshPanelAfterModal(interaction, buildTrackingPanel(cfg), {
+      notice: '✅ Convite de tracking salvo.'
+    });
     return true;
   }
 
@@ -989,9 +957,12 @@ async function handlePanelModal(client, interaction) {
       await interaction.reply({ content: '❌ Data/hora inválida ou no passado.', flags: EPHEMERAL });
       return true;
     }
+    await deferModalPanel(interaction);
     await ctx.updateConfig({ scheduledAt: dt });
     invalidatePanelCaches(client);
-    await interaction.reply({ content: `✅ Agendado para ${fmtDate(dt)}`, flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, await renderScheduleView(ctx), {
+      notice: `✅ Agendado para ${fmtDate(dt)}`
+    });
     return true;
   }
 
@@ -1004,6 +975,7 @@ async function handlePanelModal(client, interaction) {
       Number.isFinite(rawMin) ? rawMin : DIVULGATION.minIntervalMinutes
     );
 
+    await deferModalPanel(interaction);
     await ctx.updateConfig({
       messagesPerCycle,
       delayMsgMinSec: msgR.min,
@@ -1018,19 +990,21 @@ async function handlePanelModal(client, interaction) {
     if (Number.isFinite(rawMin) && rawMin < DIVULGATION.minIntervalMinutes) {
       cycleMsg += ` Intervalo mínimo: **${DIVULGATION.minIntervalMinutes}** min (50 em 50).`;
     }
-    await interaction.reply({ content: cycleMsg, flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, await renderCyclesView(ctx), { notice: cycleMsg });
     return true;
   }
 
   if (id === MODAL.DIV_NUMBER) {
     const num = Number(interaction.fields.getTextInputValue('number'));
+    await deferModalPanel(interaction);
     const run = await ctx.divRuns.getByNumber(num);
     if (!run) {
-      await interaction.reply({ content: '❌ Divulgação não encontrada.', flags: EPHEMERAL });
+      await refreshPanelAfterModal(interaction, await renderDivulgationsView(ctx), {
+        notice: '❌ Divulgação não encontrada.'
+      });
       return true;
     }
-    const payload = buildDivulgationDetail(run, run.status === 'running');
-    await interaction.reply({ ...payload, flags: EPHEMERAL });
+    await refreshPanelAfterModal(interaction, buildDivulgationDetail(run, run.status === 'running'));
     return true;
   }
 
@@ -1039,7 +1013,7 @@ async function handlePanelModal(client, interaction) {
       await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
       return true;
     }
-    await deferEphemeral(interaction);
+    await deferModalPanel(interaction);
     try {
       const raw = interaction.fields.getTextInputValue('token');
       const result = await client.services.userTokens.addToken({
@@ -1049,11 +1023,13 @@ async function handlePanelModal(client, interaction) {
       });
       invalidatePanelCaches(client);
       const label = result.updated ? 'atualizado' : 'adicionado';
-      await interaction.editReply({
-        content: `✅ Token **#${result.slot}** ${label} — conta **${result.profile.globalName || result.profile.username}**`
+      await refreshPanelAfterModal(interaction, await renderTokensView(client, tenantId), {
+        notice: `✅ Token **#${result.slot}** ${label} — conta **${result.profile.globalName || result.profile.username}**`
       });
     } catch (err) {
-      await interaction.editReply({ content: `❌ ${err.message}` });
+      await refreshPanelAfterModal(interaction, await renderTokensView(client, tenantId), {
+        notice: `❌ ${err.message}`
+      });
     }
     return true;
   }
@@ -1063,12 +1039,12 @@ async function handlePanelModal(client, interaction) {
       await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
       return true;
     }
-    await deferEphemeral(interaction);
+    await deferModalPanel(interaction);
     const slot = interaction.fields.getTextInputValue('slot');
     const ok = await client.services.userTokens.removeBySlot(slot, tenantId);
     invalidatePanelCaches(client);
-    await interaction.editReply({
-      content: ok ? `✅ Token **#${slot}** removido.` : `❌ Token **#${slot}** não encontrado.`
+    await refreshPanelAfterModal(interaction, await renderTokensView(client, tenantId), {
+      notice: ok ? `✅ Token **#${slot}** removido.` : `❌ Token **#${slot}** não encontrado.`
     });
     return true;
   }

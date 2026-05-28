@@ -1,4 +1,4 @@
-const { deferComponent, EPHEMERAL } = require('../../utils/interaction');
+const { EPHEMERAL } = require('../../utils/interaction');
 const { BTN, RESET_TYPES, isResetButton } = require('./resetIds');
 const {
   requireTenantOwner,
@@ -33,6 +33,10 @@ async function runReset(client, type, tenantId) {
   return svc.resetAll(tenantId);
 }
 
+async function editResetReply(interaction, payload) {
+  await interaction.editReply({ ...payload, embeds: payload.embeds ?? [], components: payload.components ?? [] });
+}
+
 /**
  * @param {import('../../structures/ExtendedClient').ExtendedClient} client
  * @param {import('discord.js').ButtonInteraction} interaction
@@ -40,16 +44,21 @@ async function runReset(client, type, tenantId) {
 async function handleResetInteraction(client, interaction) {
   if (!interaction.isButton() || !isResetButton(interaction.customId)) return false;
 
+  // Ack imediato (<3s) — reset geral pode levar vários segundos no DB depois disso
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferUpdate();
+  }
+
   const owner = await requireTenantOwner(client, interaction);
   if (!owner.ok) {
-    await interaction.reply({ content: owner.error, flags: EPHEMERAL });
+    await editResetReply(interaction, { content: owner.error });
     return true;
   }
 
   if (CANCEL_IDS.has(interaction.customId)) {
     clearPending(client, interaction.user.id);
-    await deferComponent(interaction);
-    await interaction.editReply(
+    await editResetReply(
+      interaction,
       buildResultEmbed('all', {
         ok: true,
         message: 'Reset **cancelado**. Nenhuma alteração foi feita.'
@@ -63,20 +72,17 @@ async function handleResetInteraction(client, interaction) {
 
   const pending = getPending(client, interaction.user.id);
   if (!pending || pending.type !== type || pending.tenantId !== owner.tenantId) {
-    await interaction.reply({
-      content: '⏱️ Confirmação expirada ou inválida. Use o comando de reset novamente.',
-      flags: EPHEMERAL
+    await editResetReply(interaction, {
+      content: '⏱️ Confirmação expirada ou inválida. Use o comando de reset novamente.'
     });
     return true;
   }
 
   const cd = checkCooldown(interaction.user.id);
   if (!cd.ok) {
-    await interaction.reply({ content: cd.error, flags: EPHEMERAL });
+    await editResetReply(interaction, { content: cd.error });
     return true;
   }
-
-  await deferComponent(interaction);
 
   try {
     const result = await runReset(client, type, owner.tenantId);
@@ -101,11 +107,12 @@ async function handleResetInteraction(client, interaction) {
       'Reset administrativo'
     );
 
-    await interaction.editReply(buildResultEmbed(type, result));
+    await editResetReply(interaction, buildResultEmbed(type, result));
   } catch (err) {
     client.logger.error({ err, type, tenantId: owner.tenantId }, 'Falha no reset');
     clearPending(client, interaction.user.id);
-    await interaction.editReply(
+    await editResetReply(
+      interaction,
       buildResultEmbed(type, {
         ok: false,
         message: `Erro ao executar reset: ${err.message || 'erro interno'}`
