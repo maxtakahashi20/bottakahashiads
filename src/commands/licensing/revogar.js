@@ -1,6 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { deferEphemeral } = require('../../utils/interaction');
 const { validateLicenseFormat } = require('../../modules/licenses/licenseValidators');
 const { dbErrorMessage } = require('../../utils/prismaSafe');
 
@@ -16,8 +15,6 @@ module.exports = {
     ),
 
   async execute(client, interaction) {
-    await deferEphemeral(interaction);
-
     if (!isPlatformOwner(interaction)) {
       await interaction.editReply({ content: '❌ Sem permissão.' });
       return;

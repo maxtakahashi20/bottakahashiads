@@ -34,13 +34,15 @@ class TenantCycleManager {
     return cycle;
   }
 
-  stopForTenant(tenantId) {
+  async stopForTenant(tenantId) {
     const cycle = this.cycles.get(tenantId);
-    if (cycle) {
-      cycle.stop();
-      cycle.runningCycle = false;
-      cycle._queuedImmediate = null;
-      this.cycles.delete(tenantId);
+    if (!cycle) return;
+
+    cycle.stop(true);
+    this.cycles.delete(tenantId);
+
+    if (cycle._deliveryPromise) {
+      await cycle._deliveryPromise.catch(() => {});
     }
   }
 

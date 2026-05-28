@@ -8,10 +8,31 @@ function required(name) {
   return v;
 }
 
+function warnDiscordTokenMismatch(token, clientId) {
+  try {
+    const prefix = token.split('.')[0];
+    if (!prefix) return;
+    const decoded = Buffer.from(prefix, 'base64').toString('utf8');
+    if (decoded !== clientId) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[env] DISCORD_TOKEN parece inválido: prefixo decodifica como ${decoded}, mas DISCORD_CLIENT_ID=${clientId}. ` +
+          'Copie o token em Discord Developer Portal → Bot → Reset Token.'
+      );
+    }
+  } catch (_) {
+    // ignore decode errors
+  }
+}
+
+const discordToken = required('DISCORD_TOKEN');
+const discordClientId = required('DISCORD_CLIENT_ID');
+warnDiscordTokenMismatch(discordToken, discordClientId);
+
 const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
-  discordToken: required('DISCORD_TOKEN'),
-  discordClientId: required('DISCORD_CLIENT_ID'),
+  discordToken,
+  discordClientId,
   /** Se definido, registra comandos só neste servidor (instantâneo) */
   devGuildId: process.env.DISCORD_DEV_GUILD_ID || null,
   databaseUrl: required('DATABASE_URL'),

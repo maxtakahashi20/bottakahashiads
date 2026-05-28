@@ -78,17 +78,29 @@ class LicenseService {
     }
 
     const existingTenant = await this.client.services.tenants.getByOwner(userId);
-    if (existingTenant && !existingTenant.isPlatform) {
+    if (existingTenant?.isPlatform) {
       return {
         ok: false,
-        error: 'Você já possui um ambiente. Use `/renovar` ou contate o suporte.'
+        error:
+          'Sua conta está vinculada ao ambiente **plataforma**. Licenças `/ativar` são para **clientes** — use outra conta Discord para testar, ou `/painel` no ambiente plataforma.'
+      };
+    }
+    if (existingTenant) {
+      return {
+        ok: false,
+        error: 'Você já possui um ambiente. Use `/renovar` com uma licença nova ou contate o suporte.'
       };
     }
 
-    const tenant = await this.client.services.tenants.createForOwner(
-      userId,
-      displayName || `Takahashi — ${userId}`
-    );
+    let tenant;
+    try {
+      tenant = await this.client.services.tenants.createForOwner(
+        userId,
+        displayName || `Takahashi — ${userId}`
+      );
+    } catch (err) {
+      return { ok: false, error: err.message || 'Não foi possível criar seu ambiente.' };
+    }
 
     const subscription = await this.client.services.subscriptions.createFromLicense({
       tenantId: tenant.id,

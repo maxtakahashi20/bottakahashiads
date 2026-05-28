@@ -45,7 +45,7 @@ class ResetService {
   async resetCycles(tenantId) {
     const stats = { ciclos: 0, divulgacoes: 0, servidoresTimers: 0 };
 
-    this.client.services.tenantCycles?.stopForTenant(tenantId);
+    await this.client.services.tenantCycles?.stopForTenant(tenantId);
 
     if (tenantId === PLATFORM_TENANT_ID) {
       const cleared = this.client.services.adsQueue?.clearQueue?.();
@@ -72,6 +72,7 @@ class ResetService {
       await prisma.tenantSettings.update({
         where: { tenantId },
         data: {
+          botRunning: false,
           totalCycles: 0,
           lastSendAt: null,
           scheduledAt: null,
@@ -229,14 +230,7 @@ class ResetService {
   _invalidateRuntime(tenantId) {
     invalidatePanelCaches(this.client);
     this.client.services.tenantConfig?.invalidate(tenantId);
-
-    const tokens = this.client.services.userTokens;
-    if (tokens) {
-      tokens._invalidate?.();
-      tokens._blockedChannels?.clear?.();
-      tokens._rateLimitedUntil?.clear?.();
-      tokens._lastSendError = null;
-    }
+    this.client.services.userTokens?.clearRuntimeForTenant?.(tenantId);
   }
 }
 

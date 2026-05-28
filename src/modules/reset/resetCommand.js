@@ -1,5 +1,4 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { deferEphemeral } = require('../../utils/interaction');
 const { buildConfirmPanel } = require('./resetPanels');
 const { requireTenantOwner, checkCooldown, setPending } = require('./resetGuard');
 
@@ -20,8 +19,6 @@ function createResetCommand(type, name, description) {
      * @param {import('../../structures/ExtendedClient').ExtendedClient} client
      */
     async execute(client, interaction) {
-      await deferEphemeral(interaction);
-
       const owner = await requireTenantOwner(client, interaction);
       if (!owner.ok) {
         await interaction.editReply({ content: owner.error });

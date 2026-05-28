@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { deferEphemeral } = require('../../utils/interaction');
 const { buildAdminAccessHome } = require('../../modules/licenses/adminAccessPanel');
 const { prisma } = require('../../database/prisma');
 const { dbErrorMessage } = require('../../utils/prismaSafe');
@@ -14,8 +13,6 @@ module.exports = {
     .setDMPermission(false),
 
   async execute(client, interaction) {
-    await deferEphemeral(interaction);
-
     if (!isPlatformOwner(interaction)) {
       await interaction.editReply({
         content:

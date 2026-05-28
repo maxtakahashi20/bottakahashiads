@@ -2,7 +2,6 @@ const { SlashCommandBuilder } = require('discord.js');
 const { renderHome } = require('../../modules/panel/panelHandler');
 const { stampPanelPayload } = require('../../modules/panel/panelUpdate');
 const { isNetworkAdmin, isPlatformOwner } = require('../../utils/permissions');
-const { EPHEMERAL } = require('../../utils/interaction');
 const { resolveTenantContext } = require('../../utils/tenantContext');
 const { setPanelTenant, PLATFORM_TENANT_ID } = require('../../modules/panel/panelScope');
 
@@ -16,9 +15,6 @@ module.exports = {
    * @param {import('../../structures/ExtendedClient').ExtendedClient} client
    */
   async execute(client, interaction) {
-    // Sempre ephemeral: painel é privado (ambiente/tenant).
-    await interaction.deferReply({ flags: EPHEMERAL });
-
     const ctx = await resolveTenantContext(client, interaction);
 
     const platformOwner = isPlatformOwner(interaction);

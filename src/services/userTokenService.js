@@ -176,9 +176,7 @@ class UserTokenService {
       { count: 0 }
     );
     this._invalidate();
-    this._blockedChannels.clear();
-    this._rateLimitedUntil.clear();
-    this._lastSendError = null;
+    await this.clearRuntimeForTenant(tenantId);
     return r.count ?? 0;
   }
 
@@ -218,18 +216,37 @@ class UserTokenService {
     return waitSec;
   }
 
-  isChannelBlocked(channelId) {
-    const block = this._blockedChannels.get(channelId);
+  _channelKey(tenantId, channelId) {
+    return `${tenantId}:${channelId}`;
+  }
+
+  async clearRuntimeForTenant(tenantId = PLATFORM_TENANT_ID) {
+    this._invalidate();
+    const prefix = `${tenantId}:`;
+    for (const key of [...this._blockedChannels.keys()]) {
+      if (key.startsWith(prefix)) this._blockedChannels.delete(key);
+    }
+    const rows = await this._safe(
+      () => prisma.userToken.findMany({ where: { tenantId }, select: { id: true } }),
+      []
+    );
+    for (const row of rows) {
+      this._rateLimitedUntil.delete(row.id);
+    }
+  }
+
+  isChannelBlocked(channelId, tenantId = PLATFORM_TENANT_ID) {
+    const block = this._blockedChannels.get(this._channelKey(tenantId, channelId));
     if (!block) return null;
     if (Date.now() >= block.until) {
-      this._blockedChannels.delete(channelId);
+      this._blockedChannels.delete(this._channelKey(tenantId, channelId));
       return null;
     }
     return block.reason;
   }
 
-  _blockChannel(channelId, reason, hours = 6) {
-    this._blockedChannels.set(channelId, {
+  _blockChannel(channelId, reason, tenantId = PLATFORM_TENANT_ID, hours = 6) {
+    this._blockedChannels.set(this._channelKey(tenantId, channelId), {
       reason,
       until: Date.now() + hours * 60 * 60 * 1000
     });
@@ -297,7 +314,7 @@ class UserTokenService {
    * Envia no canal com todos os tokens ativos até um funcionar.
    */
   async sendToChannel(channelId, payload, tenantId = PLATFORM_TENANT_ID) {
-    const blocked = this.isChannelBlocked(channelId);
+    const blocked = this.isChannelBlocked(channelId, tenantId);
     if (blocked) {
       this._lastSendError = blocked;
       return { ok: false, error: blocked, via: 'blocked', skipped: true };
@@ -337,7 +354,7 @@ class UserTokenService {
         if (isAutomodError(result)) {
           const msg =
             'Mensagem bloqueada pelo **AutoMod** do servidor (ex.: ProBot). Altere o texto em `/painel` → **Mensagem** ou peça ao admin para liberar.';
-          this._blockChannel(channelId, msg, 24);
+          this._blockChannel(channelId, msg, tenantId, 24);
           this._lastSendError = msg;
           this.client.logger.warn({ channelId, code: result.code }, 'Canal bloqueado por AutoMod (24h)');
           return { ok: false, error: msg, via: 'user', automod: true, skipped: true };
@@ -403,7 +420,7 @@ class UserTokenService {
         if (permissionFailures >= tryList.length && (code === 50013 || code === 50001)) {
           const msg =
             'Sem permissão no canal — a conta do token (e o bot) precisam estar no servidor com acesso ao canal';
-          this._blockChannel(channelId, msg);
+          this._blockChannel(channelId, msg, tenantId);
           this.client.logger.warn({ channelId }, 'Canal bloqueado por falta de permissão (6h)');
           return { ok: false, error: msg, via: 'bot' };
         }

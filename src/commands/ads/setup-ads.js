@@ -3,7 +3,6 @@ const {
   PermissionFlagsBits,
 } = require('discord.js');
 const { buildSetupPanel } = require('../../modules/ads/setupPanel');
-const { deferEphemeral } = require('../../utils/interaction');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,8 +15,6 @@ module.exports = {
    * @param {import('discord.js').ChatInputCommandInteraction} interaction
    */
   async execute(client, interaction) {
-    await deferEphemeral(interaction);
-
     const guildId = interaction.guildId;
     const s = await client.services.guildSettings.ensure(guildId);
 

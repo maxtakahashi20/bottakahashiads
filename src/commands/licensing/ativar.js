@@ -1,5 +1,4 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { EPHEMERAL } = require('../../utils/interaction');
 const { validateLicenseFormat } = require('../../modules/licenses/licenseValidators');
 const { fmtDate } = require('../../modules/panel/panelFormat');
 const { dbErrorMessage } = require('../../utils/prismaSafe');
@@ -17,11 +16,9 @@ module.exports = {
     const raw = interaction.options.getString('licenca');
     const v = validateLicenseFormat(raw);
     if (!v.ok) {
-      await interaction.reply({ content: `❌ ${v.error}`, flags: EPHEMERAL });
+      await interaction.editReply({ content: `❌ ${v.error}` });
       return;
     }
-
-    await interaction.deferReply({ flags: EPHEMERAL });
 
     try {
       const result = await client.services.licenses.activate({

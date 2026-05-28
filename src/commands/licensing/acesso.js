@@ -1,6 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
-const { deferEphemeral } = require('../../utils/interaction');
 const { DURATION_LABELS } = require('../../config/licensing');
 const { dbErrorMessage } = require('../../utils/prismaSafe');
 
@@ -30,8 +29,6 @@ module.exports = {
     ),
 
   async execute(client, interaction) {
-    await deferEphemeral(interaction);
-
     if (!isPlatformOwner(interaction)) {
       await interaction.editReply({
         content:

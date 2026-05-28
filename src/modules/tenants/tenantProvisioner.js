@@ -40,15 +40,18 @@ async function provisionTenant(prisma, { ownerUserId, displayName }) {
   return tenant;
 }
 
+const PLATFORM_OWNER_USER_ID = 'platform-system';
+
 /**
  * Garante tenant plataforma para dados legados do Takahashi Ads.
+ * ownerUserId fixo evita colisão com clientes que ativam licença (/ativar).
  */
-async function ensurePlatformTenant(prisma, ownerUserId = 'platform-system') {
+async function ensurePlatformTenant(prisma) {
   return prisma.tenant.upsert({
     where: { id: PLATFORM_TENANT_ID },
     create: {
       id: PLATFORM_TENANT_ID,
-      ownerUserId,
+      ownerUserId: PLATFORM_OWNER_USER_ID,
       displayName: 'Takahashi Ads (Plataforma)',
       status: 'ACTIVE',
       isPlatform: true,
@@ -64,7 +67,7 @@ async function ensurePlatformTenant(prisma, ownerUserId = 'platform-system') {
         }
       }
     },
-    update: { ownerUserId, status: 'ACTIVE' }
+    update: { ownerUserId: PLATFORM_OWNER_USER_ID, status: 'ACTIVE' }
   });
 }
 

@@ -4,8 +4,9 @@ const {
   requireTenantOwner,
   checkCooldown,
   touchCooldown,
-  getPending,
-  clearPending
+  consumePending,
+  tryAcquireResetLock,
+  releaseResetLock
 } = require('./resetGuard');
 const { buildResultEmbed } = require('./resetPanels');
 
@@ -37,14 +38,9 @@ async function editResetReply(interaction, payload) {
   await interaction.editReply({ ...payload, embeds: payload.embeds ?? [], components: payload.components ?? [] });
 }
 
-/**
- * @param {import('../../structures/ExtendedClient').ExtendedClient} client
- * @param {import('discord.js').ButtonInteraction} interaction
- */
 async function handleResetInteraction(client, interaction) {
   if (!interaction.isButton() || !isResetButton(interaction.customId)) return false;
 
-  // Ack imediato (<3s) — reset geral pode levar vários segundos no DB depois disso
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferUpdate();
   }
@@ -56,7 +52,6 @@ async function handleResetInteraction(client, interaction) {
   }
 
   if (CANCEL_IDS.has(interaction.customId)) {
-    clearPending(client, interaction.user.id);
     await editResetReply(
       interaction,
       buildResultEmbed('all', {
@@ -68,12 +63,14 @@ async function handleResetInteraction(client, interaction) {
   }
 
   const type = CONFIRM_TO_TYPE[interaction.customId];
-  if (!type) return false;
+  if (!type) {
+    await editResetReply(interaction, { content: '⚠️ Ação de reset não reconhecida.' });
+    return true;
+  }
 
-  const pending = getPending(client, interaction.user.id);
-  if (!pending || pending.type !== type || pending.tenantId !== owner.tenantId) {
+  if (!consumePending(client, interaction.user.id, type, owner.tenantId)) {
     await editResetReply(interaction, {
-      content: '⏱️ Confirmação expirada ou inválida. Use o comando de reset novamente.'
+      content: '⏱️ Confirmação expirada, inválida ou já utilizada. Use o comando de reset novamente.'
     });
     return true;
   }
@@ -84,9 +81,27 @@ async function handleResetInteraction(client, interaction) {
     return true;
   }
 
+  if (!tryAcquireResetLock(owner.tenantId)) {
+    await editResetReply(
+      interaction,
+      buildResultEmbed(type, {
+        ok: false,
+        message: '⏳ Já existe um reset em andamento neste ambiente. Aguarde a conclusão.'
+      })
+    );
+    return true;
+  }
+
+  await editResetReply(
+    interaction,
+    buildResultEmbed(type, {
+      ok: true,
+      message: '⏳ Executando reset… aguarde.'
+    })
+  );
+
   try {
     const result = await runReset(client, type, owner.tenantId);
-    clearPending(client, interaction.user.id);
     touchCooldown(interaction.user.id);
 
     await client.services.audit?.write(`reset_${type}`, {
@@ -110,7 +125,6 @@ async function handleResetInteraction(client, interaction) {
     await editResetReply(interaction, buildResultEmbed(type, result));
   } catch (err) {
     client.logger.error({ err, type, tenantId: owner.tenantId }, 'Falha no reset');
-    clearPending(client, interaction.user.id);
     await editResetReply(
       interaction,
       buildResultEmbed(type, {
@@ -118,6 +132,8 @@ async function handleResetInteraction(client, interaction) {
         message: `Erro ao executar reset: ${err.message || 'erro interno'}`
       })
     );
+  } finally {
+    releaseResetLock(owner.tenantId);
   }
 
   return true;

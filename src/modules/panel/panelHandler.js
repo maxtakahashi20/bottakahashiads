@@ -336,12 +336,13 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
 
   if (!opensModal) await deferComponent(interaction);
 
-  const tenantId = await resolvePanelTenant(client, interaction);
+  let tenantId;
+  try {
+  tenantId = await resolvePanelTenant(client, interaction);
   const ctx = new PanelContext(client, tenantId);
 
   if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
 
-  try {
   const forceRefresh = interaction.isButton() && effectiveId === PANEL.REFRESH;
   if (forceRefresh) invalidatePanelCaches(client);
 
@@ -358,7 +359,14 @@ async function handlePanelInteraction(client, interaction, overrideCustomId = nu
     return true;
   }
 
-  if (!interaction.isButton()) return false;
+  if (!interaction.isButton()) {
+    await refreshPanelMessage(interaction, {
+      content: '⚠️ Ação não reconhecida.',
+      embeds: [],
+      components: []
+    });
+    return true;
+  }
 
   const id = effectiveId;
 
@@ -813,6 +821,8 @@ async function handlePanelModal(client, interaction) {
   const id = interaction.customId;
   if (!id.startsWith(PREFIX)) return false;
 
+  await deferModalPanel(interaction);
+
   const tenantId = await resolvePanelTenant(client, interaction);
   const ctx = new PanelContext(client, tenantId);
   if (!(await requirePanelAccess(client, interaction, tenantId))) return true;
@@ -825,14 +835,13 @@ async function handlePanelModal(client, interaction) {
     const customMsg = interaction.fields.getTextInputValue('customMsg')?.trim() || null;
 
     if (!Number.isFinite(delayMin) || delayMin < DIVULGATION.minIntervalMinutes) {
-      await interaction.reply({
+      await interaction.editReply({
         content: `❌ Delay mínimo é **${DIVULGATION.minIntervalMinutes}** minutos (divulgação de 50 em 50 min).`,
-        flags: EPHEMERAL
+        embeds: [],
+        components: []
       });
       return true;
     }
-
-    await deferModalPanel(interaction);
 
     const access = await client.services.userTokens.validatePartnerTarget(channelId, guildId, tenantId);
     if (!access.ok) {
@@ -896,7 +905,6 @@ async function handlePanelModal(client, interaction) {
 
   if (id === 'tn:painel:modal:server_remove') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
-    await deferModalPanel(interaction);
     await client.services.guildSettings.update(
       guildId,
       { adsChannelId: null, customMessage: null, nextSendAt: null },
@@ -912,7 +920,6 @@ async function handlePanelModal(client, interaction) {
   if (id === 'tn:painel:modal:server_msg') {
     const guildId = interaction.fields.getTextInputValue('guildId').trim();
     const customMsg = interaction.fields.getTextInputValue('customMsg')?.trim() || null;
-    await deferModalPanel(interaction);
     await client.services.guildSettings.update(guildId, { customMessage: customMsg }, tenantId);
     invalidatePanelCaches(client);
     await refreshPanelAfterModal(interaction, await renderServersView(client, tenantId), {
@@ -923,7 +930,6 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.MSG_GLOBAL) {
     const message = interaction.fields.getTextInputValue('message');
-    await deferModalPanel(interaction);
     await ctx.updateConfig({ globalMessage: message });
     invalidatePanelCaches(client);
     await refreshPanelAfterModal(interaction, await renderMessageView(client, ctx, tenantId), {
@@ -935,13 +941,13 @@ async function handlePanelModal(client, interaction) {
   if (id === MODAL.TRACKING_ADD) {
     const inviteUrl = interaction.fields.getTextInputValue('inviteUrl').trim();
     if (!/^https?:\/\//i.test(inviteUrl) && !inviteUrl.includes('discord.gg')) {
-      await interaction.reply({
+      await interaction.editReply({
         content: '❌ Informe um link válido (ex: `https://discord.gg/seu-servidor`).',
-        flags: EPHEMERAL
+        embeds: [],
+        components: []
       });
       return true;
     }
-    await deferModalPanel(interaction);
     await ctx.updateConfig({ globalInviteUrl: inviteUrl });
     invalidatePanelCaches(client);
     const cfg = await ctx.getConfig();
@@ -954,10 +960,13 @@ async function handlePanelModal(client, interaction) {
   if (id === MODAL.SCHEDULE) {
     const dt = parseScheduleDate(interaction.fields.getTextInputValue('datetime'));
     if (!dt || dt.getTime() <= Date.now()) {
-      await interaction.reply({ content: '❌ Data/hora inválida ou no passado.', flags: EPHEMERAL });
+      await interaction.editReply({
+        content: '❌ Data/hora inválida ou no passado.',
+        embeds: [],
+        components: []
+      });
       return true;
     }
-    await deferModalPanel(interaction);
     await ctx.updateConfig({ scheduledAt: dt });
     invalidatePanelCaches(client);
     await refreshPanelAfterModal(interaction, await renderScheduleView(ctx), {
@@ -975,7 +984,6 @@ async function handlePanelModal(client, interaction) {
       Number.isFinite(rawMin) ? rawMin : DIVULGATION.minIntervalMinutes
     );
 
-    await deferModalPanel(interaction);
     await ctx.updateConfig({
       messagesPerCycle,
       delayMsgMinSec: msgR.min,
@@ -996,7 +1004,6 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.DIV_NUMBER) {
     const num = Number(interaction.fields.getTextInputValue('number'));
-    await deferModalPanel(interaction);
     const run = await ctx.divRuns.getByNumber(num);
     if (!run) {
       await refreshPanelAfterModal(interaction, await renderDivulgationsView(ctx), {
@@ -1010,10 +1017,9 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.TOKEN_ADD) {
     if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
-      await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
+      await interaction.editReply({ content: '❌ Sem permissão.', embeds: [], components: [] });
       return true;
     }
-    await deferModalPanel(interaction);
     try {
       const raw = interaction.fields.getTextInputValue('token');
       const result = await client.services.userTokens.addToken({
@@ -1036,10 +1042,9 @@ async function handlePanelModal(client, interaction) {
 
   if (id === MODAL.TOKEN_REMOVE) {
     if (!(await requireTokenAccessForPanel(client, interaction, tenantId))) {
-      await interaction.reply({ content: '❌ Sem permissão.', flags: EPHEMERAL });
+      await interaction.editReply({ content: '❌ Sem permissão.', embeds: [], components: [] });
       return true;
     }
-    await deferModalPanel(interaction);
     const slot = interaction.fields.getTextInputValue('slot');
     const ok = await client.services.userTokens.removeBySlot(slot, tenantId);
     invalidatePanelCaches(client);
@@ -1049,7 +1054,12 @@ async function handlePanelModal(client, interaction) {
     return true;
   }
 
-  return false;
+  await interaction.editReply({
+    content: '⚠️ Modal não reconhecido. Use `/painel` → **Atualizar**.',
+    embeds: [],
+    components: []
+  });
+  return true;
   } catch (err) {
     client.logger.error({ err, customId: id, tenantId }, 'Panel modal failed');
     const msg = dbErrorMessage(err, 'Erro ao salvar.');

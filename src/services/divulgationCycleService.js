@@ -15,17 +15,29 @@ class DivulgationCycleService {
     this.tenantId = tenantId;
     this.timer = null;
     this.runningCycle = false;
-    this._queuedImmediate = null; // { guildIds, opts, at }
+    this._generation = 0;
+    this._deliveryPromise = null;
+    this._queuedImmediate = null;
     this.delivery = new ChannelDeliveryService(client, tenantId);
     this.tenantConfig = new TenantConfigService();
     this.divRuns = new DivulgationRunService(tenantId);
+  }
+
+  _isAlive() {
+    const mgr = this.client.services.tenantCycles;
+    if (!mgr) return true;
+    return mgr.get(this.tenantId) === this;
+  }
+
+  _isCurrentGeneration(gen) {
+    return gen === this._generation && this._isAlive();
   }
 
   /**
    * @param {{ burst?: boolean }} opts — burst=true envia uma vez ao ligar o bot
    */
   start(opts = {}) {
-    this.stop();
+    this.stop(false);
     if (opts.burst) {
       this.sendImmediate()
         .catch((err) => this.client.logger.error({ err }, 'Envio imediato ao iniciar falhou'))
@@ -35,20 +47,32 @@ class DivulgationCycleService {
     }
   }
 
-  stop() {
+  /** @param {boolean} [deactivate] — invalida timers/entregas (reset/stop) */
+  stop(deactivate = false) {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (deactivate) {
+      this._generation += 1;
+      this._queuedImmediate = null;
+    }
   }
 
   async _scheduleNext() {
+    if (!this._isAlive()) return;
+    const gen = this._generation;
+
     const cfg = await this.tenantConfig.get(this.tenantId);
-    if (!cfg.botRunning) return;
+    if (!cfg.botRunning || !this._isCurrentGeneration(gen)) return;
 
     const { clampDelayMinutes } = require('../utils/divulgationLimits');
     const cycleMin = clampDelayMinutes(cfg.minCycleMinutes);
     const ms = cycleMin * 60_000;
     this.timer = setTimeout(() => {
-      this._runCycle().finally(() => this._scheduleNext());
+      if (!this._isCurrentGeneration(gen)) return;
+      this._runCycle()
+        .finally(() => {
+          if (this._isCurrentGeneration(gen)) this._scheduleNext();
+        });
     }, ms);
   }
 
@@ -90,22 +114,36 @@ class DivulgationCycleService {
   }
 
   async _executeDelivery(targets, cfg, { immediate = false } = {}) {
-    if (this.runningCycle) {
-      // Se for envio manual, enfileira para rodar assim que o ciclo atual terminar.
+    if (this._deliveryPromise) {
       if (immediate) {
         this._queuedImmediate = { targets, cfg, at: Date.now() };
-        return { ok: true, queued: true, sent: 0, errors: 0, reason: 'Envio enfileirado — aguardando ciclo atual.' };
+        return {
+          ok: true,
+          queued: true,
+          sent: 0,
+          errors: 0,
+          reason: 'Envio enfileirado — aguardando ciclo atual.'
+        };
       }
       return { ok: false, sent: 0, errors: 0, reason: 'Ciclo em andamento, tente em instantes.' };
     }
 
+    const gen = this._generation;
     this.runningCycle = true;
-    let run = await this.divRuns.getCurrent();
-    if (!run) run = await this.divRuns.start();
 
-    try {
+    const runBody = async () => {
+      if (!this._isCurrentGeneration(gen)) {
+        return { ok: false, sent: 0, errors: 0, reason: 'Ciclo cancelado.' };
+      }
+
+      let run = await this.divRuns.getCurrent();
+      if (!run) run = await this.divRuns.start();
+
       const toSend = [];
       for (const t of targets) {
+        if (!this._isCurrentGeneration(gen)) {
+          return { ok: false, sent: 0, errors: 0, reason: 'Ciclo cancelado.' };
+        }
         if (!t.channelId) continue;
         if (immediate) {
           toSend.push(t);
@@ -139,15 +177,23 @@ class DivulgationCycleService {
           delayGuildMax: cfg.delayGuildMaxSec,
           messagesPerServer: cfg.messagesPerCycle,
           onSuccess: async (t) => {
-            const s = await this.client.services.guildSettings.get(t.guildId, this.tenantId);
-            await this.client.services.guildSettings.update(
-              t.guildId,
-              { nextSendAt: nextSendDate(s?.delayMinutes) },
-              this.tenantId
-            );
+            try {
+              const s = await this.client.services.guildSettings.get(t.guildId, this.tenantId);
+              await this.client.services.guildSettings.update(
+                t.guildId,
+                { nextSendAt: nextSendDate(s?.delayMinutes) },
+                this.tenantId
+              );
+            } catch (err) {
+              this.client.logger.warn({ err, guildId: t.guildId }, 'Falha ao atualizar nextSendAt');
+            }
           }
         }
       );
+
+      if (!this._isCurrentGeneration(gen)) {
+        return { ok: false, sent: 0, errors: 0, reason: 'Ciclo cancelado.' };
+      }
 
       if (sent > 0) {
         await this.divRuns.bump(run.id, { messages: sent, cycles: 1, errors });
@@ -168,9 +214,17 @@ class DivulgationCycleService {
         errors,
         reason: sent > 0 ? null : lastError || this.client.services.userTokens?.getLastError() || 'Erro desconhecido'
       };
+    };
+
+    this._deliveryPromise = runBody();
+    try {
+      return await this._deliveryPromise;
     } finally {
+      this._deliveryPromise = null;
       this.runningCycle = false;
-      // Roda envio manual enfileirado (uma vez) logo após liberar o ciclo.
+
+      if (!this._isCurrentGeneration(gen)) return;
+
       const queued = this._queuedImmediate;
       this._queuedImmediate = null;
       if (queued?.targets?.length && queued?.cfg) {

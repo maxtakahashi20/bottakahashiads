@@ -7,16 +7,13 @@ const PENDING_TTL_MS = 120_000;
 /** @type {Map<string, number>} */
 const lastUse = new Map();
 
-/**
- * @param {import('../../structures/ExtendedClient').ExtendedClient} client
- */
+/** @type {Set<string>} tenants com reset em execução */
+const resetLocks = new Set();
+
 function ensurePending(client) {
   if (!client._pendingResets) client._pendingResets = new Map();
 }
 
-/**
- * Apenas dono do tenant (ou dono da plataforma no tenant platform).
- */
 async function requireTenantOwner(client, interaction) {
   const ctx = await resolveTenantContext(client, interaction);
 
@@ -86,6 +83,24 @@ function clearPending(client, userId) {
   client._pendingResets.delete(userId);
 }
 
+/** Consome pending de forma atômica (evita double-click). */
+function consumePending(client, userId, type, tenantId) {
+  const p = getPending(client, userId);
+  if (!p || p.type !== type || p.tenantId !== tenantId) return false;
+  clearPending(client, userId);
+  return true;
+}
+
+function tryAcquireResetLock(tenantId) {
+  if (resetLocks.has(tenantId)) return false;
+  resetLocks.add(tenantId);
+  return true;
+}
+
+function releaseResetLock(tenantId) {
+  resetLocks.delete(tenantId);
+}
+
 module.exports = {
   requireTenantOwner,
   checkCooldown,
@@ -93,6 +108,9 @@ module.exports = {
   setPending,
   getPending,
   clearPending,
+  consumePending,
+  tryAcquireResetLock,
+  releaseResetLock,
   COOLDOWN_MS,
   PENDING_TTL_MS
 };

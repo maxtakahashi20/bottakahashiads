@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { resolveTenantContext } = require('../../utils/tenantContext');
-const { deferEphemeral } = require('../../utils/interaction');
 const { BRAND } = require('../../config/constants');
 const { DURATION_LABELS } = require('../../config/licensing');
 const { fmtDate } = require('../../modules/panel/panelFormat');
@@ -12,8 +11,6 @@ module.exports = {
     .setDescription('Detalhes do seu plano Takahashi Ads.'),
 
   async execute(client, interaction) {
-    await deferEphemeral(interaction);
-
     try {
       const ctx = await resolveTenantContext(client, interaction);
 

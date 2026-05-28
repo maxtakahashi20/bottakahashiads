@@ -65,6 +65,8 @@ function buildAnnounceModal() {
 }
 
 module.exports = {
+  skipCommandLoading: true,
+
   data: new SlashCommandBuilder()
     .setName('anunciar')
     .setDescription('Criar um anúncio para divulgar na Takahashi Network.')

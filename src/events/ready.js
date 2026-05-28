@@ -1,5 +1,4 @@
 const { Events } = require('discord.js');
-const { env } = require('../config/env');
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
 const { dbErrorMessage } = require('../utils/prismaSafe');
 
@@ -12,10 +11,8 @@ module.exports = {
   async execute(client) {
     client.logger.info({ user: client.user?.tag }, 'Bot ready');
 
-    const platformOwner = env.inviteOwnerIds[0] || 'platform-system';
-
     try {
-      await client.services.tenants.bootstrapPlatform(platformOwner);
+      await client.services.tenants.bootstrapPlatform();
     } catch (err) {
       client.logger.error({ err }, `SaaS bootstrap: ${dbErrorMessage(err)}`);
     }

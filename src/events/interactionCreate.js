@@ -10,6 +10,7 @@ const { buildSetupPanel } = require('../modules/ads/setupPanel');
 const { buildAdEmbed } = require('../modules/ads/embedFactory');
 const { BRAND } = require('../config/constants');
 const { safeReply, deferEphemeral, deferComponent } = require('../utils/interaction');
+const { beginCommandLoading, shouldSkipCommandLoading } = require('../utils/commandLoading');
 const { isNetworkAdmin } = require('../utils/permissions');
 const { buildRedePanel } = require('../modules/network/redePanel');
 const { handlePanelInteraction, handlePanelModal, isPanelInteraction } = require('../modules/panel/panelHandler');
@@ -42,6 +43,9 @@ module.exports = {
               '⚠️ Comando não carregado nesta instância. Faça redeploy e rode `npm run register:commands`.'
           });
           return;
+        }
+        if (!shouldSkipCommandLoading(cmd)) {
+          await beginCommandLoading(interaction, interaction.commandName);
         }
         await cmd.execute(client, interaction);
         return;
@@ -402,9 +406,17 @@ module.exports = {
       client.logger.error({ err }, 'interactionCreate error');
       if (interaction.isRepliable()) {
         try {
-          await safeReply(interaction, {
-            content: 'Ocorreu um erro ao processar sua ação. Tente novamente.'
-          });
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({
+              content: 'Ocorreu um erro ao processar sua ação. Tente novamente.',
+              embeds: [],
+              components: []
+            });
+          } else {
+            await safeReply(interaction, {
+              content: 'Ocorreu um erro ao processar sua ação. Tente novamente.'
+            });
+          }
         } catch (_) {}
       }
     }

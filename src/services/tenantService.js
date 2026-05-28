@@ -12,8 +12,8 @@ class TenantService {
     this.platformTenantId = PLATFORM_TENANT_ID;
   }
 
-  async bootstrapPlatform(ownerUserId) {
-    return ensurePlatformTenant(prisma, ownerUserId);
+  async bootstrapPlatform() {
+    return ensurePlatformTenant(prisma);
   }
 
   async getByOwner(userId) {
@@ -44,8 +44,11 @@ class TenantService {
 
   async createForOwner(ownerUserId, displayName) {
     const existing = await this.getByOwner(ownerUserId);
-    if (existing && !existing.isPlatform) {
-      throw new Error('Este usuário já possui um ambiente ativo.');
+    if (existing?.isPlatform) {
+      throw new Error('Conta vinculada ao ambiente plataforma. Use outra conta Discord para ativar licença.');
+    }
+    if (existing) {
+      throw new Error('Este usuário já possui um ambiente. Use `/renovar` com uma licença nova.');
     }
     return provisionTenant(prisma, { ownerUserId, displayName });
   }
