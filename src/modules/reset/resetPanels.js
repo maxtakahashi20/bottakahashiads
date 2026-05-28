@@ -5,7 +5,8 @@ const { BTN } = require('./resetIds');
 const TITLES = {
   guilds: 'Reset de Servidores',
   token: 'Reset de Token',
-  all: 'Reset Geral'
+  all: 'Reset Geral',
+  cycles: 'Reset de Ciclos'
 };
 
 const DESCRIPTIONS = {
@@ -30,7 +31,30 @@ const DESCRIPTIONS = {
     '• Para o bot de divulgação do seu ambiente',
     '',
     'Sua conta ficará **completamente zerada** (licença permanece ativa).'
+  ].join('\n'),
+  cycles: [
+    '• Zera o contador **Ciclos** do painel',
+    '• Remove histórico de **divulgações** (runs)',
+    '• Limpa agendamento e último envio',
+    '• Reseta timers `nextSendAt` dos servidores',
+    '• Para o ciclo em memória e limpa fila (plataforma)',
+    '',
+    '**Não** remove tokens, servidores nem mensagem global.'
   ].join('\n')
+};
+
+const CONFIRM_BTN = {
+  guilds: BTN.confirmGuilds,
+  token: BTN.confirmToken,
+  all: BTN.confirmAll,
+  cycles: BTN.confirmCycles
+};
+
+const CANCEL_BTN = {
+  guilds: BTN.cancelGuilds,
+  token: BTN.cancelToken,
+  all: BTN.cancelAll,
+  cycles: BTN.cancelCycles
 };
 
 function buildConfirmPanel(type, { tenantName }) {
@@ -50,8 +74,8 @@ function buildConfirmPanel(type, { tenantName }) {
     .setFooter({ text: `${BRAND.storeName} • Reset administrativo` })
     .setTimestamp();
 
-  const confirmId = type === 'guilds' ? BTN.confirmGuilds : type === 'token' ? BTN.confirmToken : BTN.confirmAll;
-  const cancelId = type === 'guilds' ? BTN.cancelGuilds : type === 'token' ? BTN.cancelToken : BTN.cancelAll;
+  const confirmId = CONFIRM_BTN[type] || BTN.confirmAll;
+  const cancelId = CANCEL_BTN[type] || BTN.cancelAll;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(confirmId).setLabel('Confirmar').setStyle(ButtonStyle.Danger),

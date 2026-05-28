@@ -12,10 +12,16 @@ const { buildResultEmbed } = require('./resetPanels');
 const CONFIRM_TO_TYPE = {
   [BTN.confirmGuilds]: RESET_TYPES.guilds,
   [BTN.confirmToken]: RESET_TYPES.token,
-  [BTN.confirmAll]: RESET_TYPES.all
+  [BTN.confirmAll]: RESET_TYPES.all,
+  [BTN.confirmCycles]: RESET_TYPES.cycles
 };
 
-const CANCEL_IDS = new Set([BTN.cancelGuilds, BTN.cancelToken, BTN.cancelAll]);
+const CANCEL_IDS = new Set([
+  BTN.cancelGuilds,
+  BTN.cancelToken,
+  BTN.cancelAll,
+  BTN.cancelCycles
+]);
 
 async function runReset(client, type, tenantId) {
   const svc = client.services.reset;
@@ -23,6 +29,7 @@ async function runReset(client, type, tenantId) {
 
   if (type === RESET_TYPES.guilds) return svc.resetGuilds(tenantId);
   if (type === RESET_TYPES.token) return svc.resetToken(tenantId);
+  if (type === RESET_TYPES.cycles) return svc.resetCycles(tenantId);
   return svc.resetAll(tenantId);
 }
 

@@ -6,13 +6,16 @@ const BTN = {
   confirmToken: `${PREFIX}:confirm:token`,
   cancelToken: `${PREFIX}:cancel:token`,
   confirmAll: `${PREFIX}:confirm:all`,
-  cancelAll: `${PREFIX}:cancel:all`
+  cancelAll: `${PREFIX}:cancel:all`,
+  confirmCycles: `${PREFIX}:confirm:cycles`,
+  cancelCycles: `${PREFIX}:cancel:cycles`
 };
 
 const RESET_TYPES = {
   guilds: 'guilds',
   token: 'token',
-  all: 'all'
+  all: 'all',
+  cycles: 'cycles'
 };
 
 function isResetButton(id) {

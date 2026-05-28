@@ -38,6 +38,8 @@ class TenantCycleManager {
     const cycle = this.cycles.get(tenantId);
     if (cycle) {
       cycle.stop();
+      cycle.runningCycle = false;
+      cycle._queuedImmediate = null;
       this.cycles.delete(tenantId);
     }
   }

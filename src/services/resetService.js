@@ -42,6 +42,69 @@ class ResetService {
     };
   }
 
+  async resetCycles(tenantId) {
+    const stats = { ciclos: 0, divulgacoes: 0, servidoresTimers: 0 };
+
+    this.client.services.tenantCycles?.stopForTenant(tenantId);
+
+    if (tenantId === PLATFORM_TENANT_ID) {
+      const cleared = this.client.services.adsQueue?.clearQueue?.();
+      if (typeof cleared === 'number') stats.fila = cleared;
+    }
+
+    try {
+      await prisma.divulgationRun.updateMany({
+        where: { tenantId, status: 'running' },
+        data: { status: 'completed', endedAt: new Date() }
+      });
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
+    }
+
+    try {
+      const runs = await prisma.divulgationRun.deleteMany({ where: { tenantId } });
+      stats.divulgacoes = runs.count;
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
+    }
+
+    try {
+      await prisma.tenantSettings.update({
+        where: { tenantId },
+        data: {
+          totalCycles: 0,
+          lastSendAt: null,
+          scheduledAt: null,
+          configVersion: { increment: 1 }
+        }
+      });
+      stats.ciclos = 1;
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
+    }
+
+    try {
+      const guilds = await prisma.guildSettings.updateMany({
+        where: { tenantId },
+        data: { nextSendAt: null }
+      });
+      stats.servidoresTimers = guilds.count;
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
+    }
+
+    this.client.services.tenantConfig?.invalidate(tenantId);
+    this._invalidateRuntime(tenantId);
+    invalidateDivulgationCache();
+
+    return {
+      ok: true,
+      message:
+        'Ciclos **zerados**. Contador e histórico de divulgações limpos. Use `/painel` → **Iniciar Bot** para retomar quando quiser.',
+      stats
+    };
+  }
+
   async resetToken(tenantId) {
     let removed = 0;
     if (this.client.services.userTokens?.removeAllForTenant) {
@@ -66,10 +129,8 @@ class ResetService {
   async resetAll(tenantId) {
     const stats = {};
 
-    this.client.services.tenantCycles?.stopForTenant(tenantId);
-    if (tenantId === PLATFORM_TENANT_ID) {
-      this.client.services.adsQueue?.clearQueue();
-    }
+    const cycles = await this.resetCycles(tenantId);
+    Object.assign(stats, cycles.stats);
 
     const guilds = await this.resetGuilds(tenantId);
     const tokens = await this.resetToken(tenantId);
@@ -100,13 +161,6 @@ class ResetService {
       await prisma.tenantEmbedTemplate.deleteMany({ where: { tenantId } });
     } catch {
       /* tabelas opcionais */
-    }
-
-    try {
-      const runs = await prisma.divulgationRun.deleteMany({ where: { tenantId } });
-      stats.divulgacoes = runs.count;
-    } catch (err) {
-      if (!isMissingTableError(err)) throw err;
     }
 
     try {
