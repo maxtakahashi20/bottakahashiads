@@ -17,6 +17,18 @@ function isPermissionError(result) {
   return result.status === 403 || result.code === 50001 || /sem permissão|50001|falta acesso/i.test(result.error || '');
 }
 
+function isAutomodError(result) {
+  return (
+    result?.code === 200000 ||
+    (result?.status === 400 && /automod|bloqueado por este servidor/i.test(result?.error || ''))
+  );
+}
+
+/** Espera máxima em um único envio (evita sleep de horas). */
+const MAX_INLINE_RATE_WAIT_SEC = 90;
+/** Cooldown gravado no token após 429. */
+const MAX_TOKEN_RATE_COOLDOWN_SEC = 600;
+
 class UserTokenService {
   /**
    * @param {import('../structures/ExtendedClient').ExtendedClient} client
@@ -194,7 +206,14 @@ class UserTokenService {
   }
 
   _markTokenRateLimited(tokenId, retryAfterSec) {
-    const waitSec = Math.max(1, Math.ceil(retryAfterSec || 5));
+    const raw = Math.max(1, Math.ceil(retryAfterSec || 5));
+    const waitSec = Math.min(MAX_TOKEN_RATE_COOLDOWN_SEC, raw);
+    if (raw > MAX_TOKEN_RATE_COOLDOWN_SEC) {
+      this.client.logger.warn(
+        { tokenId, rawSec: raw, cappedSec: waitSec },
+        'Rate limit Discord acima do cap — cooldown limitado a 10 min'
+      );
+    }
     this._rateLimitedUntil.set(tokenId, Date.now() + waitSec * 1000);
     return waitSec;
   }
@@ -255,12 +274,16 @@ class UserTokenService {
 
     if (!result.ok && result.status === 429 && result.retryAfterSec) {
       const waitSec = this._markTokenRateLimited(row.id, result.retryAfterSec);
+      const sleepSec = Math.min(MAX_INLINE_RATE_WAIT_SEC, waitSec);
       this.client.logger.info(
-        { channelId, slot: row.slot, waitSec, code: result.code },
-        'Rate limit — aguardando retry'
+        { channelId, slot: row.slot, waitSec: sleepSec, cooldownSec: waitSec, code: result.code },
+        'Rate limit — aguardando retry (cap 90s)'
       );
-      await sleep(waitSec * 1000 + 500);
+      await sleep(sleepSec * 1000 + 500);
       result = await sendChannelMessageAsUser(channelId, token, payload);
+      if (!result.ok && result.retryAfterSec) {
+        result.retryAfterSec = Math.min(MAX_TOKEN_RATE_COOLDOWN_SEC, result.retryAfterSec);
+      }
     }
 
     if (!result.ok && result.status === 429) {
@@ -310,8 +333,21 @@ class UserTokenService {
           return { ok: true, via: 'user', tokenSlot: row.slot };
         }
         lastError = result.error;
+
+        if (isAutomodError(result)) {
+          const msg =
+            'Mensagem bloqueada pelo **AutoMod** do servidor (ex.: ProBot). Altere o texto em `/painel` → **Mensagem** ou peça ao admin para liberar.';
+          this._blockChannel(channelId, msg, 24);
+          this._lastSendError = msg;
+          this.client.logger.warn({ channelId, code: result.code }, 'Canal bloqueado por AutoMod (24h)');
+          return { ok: false, error: msg, via: 'user', automod: true, skipped: true };
+        }
+
         if (result.status === 429) {
-          lastRateLimitSec = Math.max(lastRateLimitSec || 0, result.retryAfterSec || 15);
+          lastRateLimitSec = Math.max(
+            lastRateLimitSec || 0,
+            Math.min(MAX_INLINE_RATE_WAIT_SEC, result.retryAfterSec || 15)
+          );
         }
         this.client.logger.warn(
           { channelId, slot: row.slot, error: result.error, status: result.status, code: result.code },
@@ -341,9 +377,10 @@ class UserTokenService {
 
     // Se todos falharam por rate limit, informe retry para o delivery respeitar backoff.
     if (lastRateLimitSec) {
+      const sec = Math.min(MAX_INLINE_RATE_WAIT_SEC, lastRateLimitSec);
       return {
         ok: false,
-        error: `Rate limit — aguarde ${lastRateLimitSec}s e tente novamente`,
+        error: `Rate limit — aguarde ~${sec}s e tente novamente (conta com limite do Discord)`,
         via: 'user',
         rateLimited: true,
         retryAfterSec: lastRateLimitSec

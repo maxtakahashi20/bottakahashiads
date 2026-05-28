@@ -1,5 +1,8 @@
 const DISCORD_API = 'https://discord.com/api/v10';
 
+/** Discord às vezes devolve retry-after absurdo (horas) — limitamos para não travar o bot. */
+const MAX_RETRY_AFTER_SEC = 600;
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -27,12 +30,15 @@ async function discordUserFetch(path, userToken, options = {}) {
 
   const headerRetry = Number(res.headers.get('retry-after'));
   const bodyRetry = Number(data?.retry_after);
-  const retryAfterSec =
+  let retryAfterSec =
     Number.isFinite(bodyRetry) && bodyRetry > 0
       ? bodyRetry
       : Number.isFinite(headerRetry) && headerRetry > 0
         ? headerRetry
         : null;
+  if (retryAfterSec != null) {
+    retryAfterSec = Math.min(MAX_RETRY_AFTER_SEC, Math.max(1, Math.ceil(retryAfterSec)));
+  }
 
   return { ok: res.ok, status: res.status, data, retryAfterSec };
 }
@@ -44,6 +50,9 @@ function formatApiError(status, data) {
   if (status === 403) return `Sem permissão no canal${code}: ${msg}`;
   if (status === 404) return 'Canal não encontrado — confira o ID';
   if (status === 429) return `Rate limit${code} — aguarde e tente de novo`;
+  if (data?.code === 200000 || /automod/i.test(msg)) {
+    return `Mensagem bloqueada pelo **AutoMod** do servidor${code}. Ajuste o texto ou peça ao admin para liberar.`;
+  }
   return `${msg}${code}`;
 }
 
