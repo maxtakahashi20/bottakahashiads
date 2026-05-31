@@ -4,10 +4,10 @@ const { DIVULGATION } = require('../config/constants');
 const DEFAULTS = {
   botRunning: true,
   messagesPerCycle: 1,
-  delayMsgMinSec: 2,
-  delayMsgMaxSec: 5,
-  delayGuildMinSec: 15,
-  delayGuildMaxSec: 35,
+  delayMsgMinSec: 8,
+  delayMsgMaxSec: 20,
+  delayGuildMinSec: 45,
+  delayGuildMaxSec: 90,
   minCycleMinutes: DIVULGATION.minIntervalMinutes,
   totalCycles: 0
 };

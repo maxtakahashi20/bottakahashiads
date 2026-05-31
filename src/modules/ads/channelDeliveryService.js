@@ -1,4 +1,5 @@
 const { prisma } = require('../../database/prisma');
+const { HISTORY_LIMIT, isDuplicateDmContent, buildOutboundFingerprint } = require('../../utils/dmAntiflood');
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -31,6 +32,21 @@ class ChannelDeliveryService {
       return { ok: false, error: 'Canal inválido ou inacessível' };
     }
     try {
+      const botId = this.client.user?.id;
+      if (botId) {
+        const messages = await channel.messages.fetch({ limit: HISTORY_LIMIT }).catch(() => null);
+        if (messages) {
+          const arr = [...messages.values()].map((m) => ({
+            content: m.content,
+            embeds: m.embeds,
+            author: { id: m.author?.id }
+          }));
+          const text = buildOutboundFingerprint('', payload);
+          if (isDuplicateDmContent(arr, text, botId).duplicate) {
+            return { ok: true, via: 'bot', skipped: true, reason: 'antiflood' };
+          }
+        }
+      }
       await channel.send(payload);
       return { ok: true, via: 'bot' };
     } catch (err) {

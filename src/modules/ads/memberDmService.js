@@ -1,9 +1,10 @@
 const { setTimeout: delay } = require('timers/promises');
 const { DM_BROADCAST } = require('../../config/constants');
 const { splitDiscordContent } = require('../../utils/discordMessage');
+const { HISTORY_LIMIT, isDuplicateDmContent, buildOutboundFingerprint } = require('../../utils/dmAntiflood');
 
-/** Delay padrão entre DMs (embed/anúncio legado) */
-const DM_DELAY_MS = 1200;
+/** Delay padrão entre DMs (bot) */
+const DM_DELAY_MS = 5000;
 
 function isDmClosedError(err) {
   const code = err?.code ?? err?.rawError?.code;
@@ -27,26 +28,47 @@ async function fetchHumanMembers(client, guildId) {
   return [...guild.members.cache.values()].filter((m) => !m.user.bot);
 }
 
+async function channelHasDuplicate(dmChannel, outboundText, senderId) {
+  const messages = await dmChannel.messages.fetch({ limit: HISTORY_LIMIT }).catch(() => null);
+  if (!messages) return false;
+  const arr = [...messages.values()].map((m) => ({
+    content: m.content,
+    embeds: m.embeds,
+    author: { id: m.author?.id }
+  }));
+  return isDuplicateDmContent(arr, outboundText, senderId).duplicate;
+}
+
 /**
  * @param {import('discord.js').GuildMember} member
  * @param {import('discord.js').APIEmbed} embedData
  * @param {import('discord.js').ActionRowBuilder[]} components
+ * @param {string} senderId
  */
-async function sendDmEmbedToMember(member, embedData, components) {
+async function sendDmEmbedToMember(member, embedData, components, senderId) {
   const dm = await member.createDM();
+  const fingerprint = buildOutboundFingerprint('', { embeds: [embedData] });
+  if (senderId && (await channelHasDuplicate(dm, fingerprint, senderId))) {
+    return { skipped: true };
+  }
   await dm.send({
     embeds: [embedData],
     components,
     allowedMentions: { parse: [] }
   });
+  return { skipped: false };
 }
 
 /**
  * @param {import('discord.js').GuildMember} member
  * @param {string} content
+ * @param {string} senderId
  */
-async function sendDmTextToMember(member, content) {
+async function sendDmTextToMember(member, content, senderId) {
   const dm = await member.createDM();
+  if (senderId && (await channelHasDuplicate(dm, content, senderId))) {
+    return { skipped: true };
+  }
   const parts = splitDiscordContent(content);
   for (const part of parts) {
     // eslint-disable-next-line no-await-in-loop
@@ -55,22 +77,21 @@ async function sendDmTextToMember(member, content) {
       allowedMentions: { parse: [] }
     });
   }
+  return { skipped: false };
 }
 
-/**
- * @param {import('discord.js').GuildMember} member
- * @param {() => Promise<void>} sendFn
- */
 async function trySendWithRateLimit(member, sendFn) {
   try {
-    await sendFn();
+    const r = await sendFn();
+    if (r?.skipped) return { status: 'skipped', error: null };
     return { status: 'sent', error: null };
   } catch (err) {
     if (isRateLimitError(err)) {
-      const waitMs = (err.retryAfter ?? 5) * 1000;
+      const waitMs = (err.retryAfter ?? 10) * 1000;
       await delay(waitMs);
       try {
-        await sendFn();
+        const r = await sendFn();
+        if (r?.skipped) return { status: 'skipped', error: null };
         return { status: 'sent', error: null };
       } catch (retryErr) {
         if (isDmClosedError(retryErr)) {
@@ -86,25 +107,24 @@ async function trySendWithRateLimit(member, sendFn) {
   }
 }
 
-/**
- * Envia anúncio por DM para todos os membros humanos de um servidor.
- * @returns {{ ok: number, fail: number, dmClosed: number, members: number, deliveries: Array }}
- */
 async function deliverToGuildMembers(client, { guildId, embed, components }) {
   const members = await fetchHumanMembers(client, guildId);
   const embedData = embed.toJSON();
+  const senderId = client.user?.id;
   let ok = 0;
   let fail = 0;
   let dmClosed = 0;
+  let skipped = 0;
   const deliveries = [];
 
   for (const member of members) {
     // eslint-disable-next-line no-await-in-loop
     const result = await trySendWithRateLimit(member, () =>
-      sendDmEmbedToMember(member, embedData, components)
+      sendDmEmbedToMember(member, embedData, components, senderId)
     );
 
     if (result.status === 'sent') ok += 1;
+    else if (result.status === 'skipped') skipped += 1;
     else if (result.status === 'dm_closed') dmClosed += 1;
     else fail += 1;
 
@@ -114,33 +134,37 @@ async function deliverToGuildMembers(client, { guildId, embed, components }) {
     await delay(DM_DELAY_MS);
   }
 
-  return { ok, fail, dmClosed, members: members.length, deliveries };
+  return { ok, fail, dmClosed, skipped, members: members.length, deliveries };
 }
 
-/**
- * Envia mensagem de texto por DM, um membro por vez.
- * @param {object} opts
- * @param {number} opts.delayMs
- * @param {(stats: { sent: number, failed: number, dmClosed: number, total: number, processed: number }) => Promise<void>} [opts.onProgress]
- * @returns {{ ok: number, fail: number, dmClosed: number, members: number, deliveries: Array }}
- */
 async function deliverPlainTextToGuildMembers(
   client,
-  { guildId, content, delayMs, onProgress }
+  { guildId, content, delayMs, onProgress, shouldAbort }
 ) {
   const members = await fetchHumanMembers(client, guildId);
+  const senderId = client.user?.id;
   let ok = 0;
   let fail = 0;
   let dmClosed = 0;
+  let skipped = 0;
   const deliveries = [];
   const total = members.length;
+  let aborted = false;
 
   for (let i = 0; i < members.length; i += 1) {
+    if (shouldAbort?.()) {
+      aborted = true;
+      break;
+    }
+
     const member = members[i];
     // eslint-disable-next-line no-await-in-loop
-    const result = await trySendWithRateLimit(member, () => sendDmTextToMember(member, content));
+    const result = await trySendWithRateLimit(member, () =>
+      sendDmTextToMember(member, content, senderId)
+    );
 
     if (result.status === 'sent') ok += 1;
+    else if (result.status === 'skipped') skipped += 1;
     else if (result.status === 'dm_closed') dmClosed += 1;
     else fail += 1;
 
@@ -152,7 +176,7 @@ async function deliverPlainTextToGuildMembers(
       (processed % DM_BROADCAST.progressUpdateEvery === 0 || processed === total)
     ) {
       // eslint-disable-next-line no-await-in-loop
-      await onProgress({ sent: ok, failed: fail, dmClosed, total, processed });
+      await onProgress({ sent: ok, failed: fail, dmClosed, skipped, total, processed });
     }
 
     if (i < members.length - 1) {
@@ -161,7 +185,7 @@ async function deliverPlainTextToGuildMembers(
     }
   }
 
-  return { ok, fail, dmClosed, members: total, deliveries };
+  return { ok, fail, dmClosed, skipped, members: total, deliveries, aborted };
 }
 
 module.exports = {

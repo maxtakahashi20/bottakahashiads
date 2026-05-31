@@ -6,38 +6,61 @@ const {
 } = require('discord.js');
 const { DM_BROADCAST } = require('../../config/constants');
 
+function buildTokenField() {
+  return new TextInputBuilder()
+    .setCustomId('token')
+    .setLabel('TOKEN')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMinLength(20)
+    .setMaxLength(4000)
+    .setPlaceholder('Cole o token da sua conta de usuário (não use token de bot)');
+}
+
+function buildGuildIdField() {
+  return new TextInputBuilder()
+    .setCustomId('servidor_id')
+    .setLabel('ID DISCORD')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMinLength(17)
+    .setMaxLength(20)
+    .setPlaceholder('ID do servidor (sua conta precisa estar nele)');
+}
+
 function buildIntervalField() {
   return new TextInputBuilder()
     .setCustomId('intervalo')
-    .setLabel('Segundos entre cada DM (anti-spam)')
+    .setLabel('Segundos em cada DM')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
     .setMinLength(1)
-    .setMaxLength(3)
+    .setMaxLength(4)
+    .setValue(String(DM_BROADCAST.delayRecommendedSec))
     .setPlaceholder(
-      `Recomendado: ${DM_BROADCAST.delayRecommendedSec}s (mín. ${DM_BROADCAST.delayMinSec}, máx. ${DM_BROADCAST.delayMaxSec})`
-    )
-    .setValue(String(DM_BROADCAST.delayRecommendedSec));
+      `Seguro: ${DM_BROADCAST.delayRecommendedSec}s (1 min). Mín. ${DM_BROADCAST.delayMinSec}s`
+    );
 }
 
 function buildMessageField() {
   return new TextInputBuilder()
     .setCustomId('mensagem')
-    .setLabel('Mensagem personalizada (até 4000 caracteres)')
+    .setLabel('Mensagem')
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMinLength(DM_BROADCAST.messageMin)
     .setMaxLength(DM_BROADCAST.messageMax)
-    .setPlaceholder('Texto, links, convite, publi… (sem @everyone / @here)');
+    .setPlaceholder('Até 4000 caracteres — links, publi, convite…');
 }
 
-/** Modal: intervalo + mensagem (amigos) */
+/** TOKEN + segundos + mensagem */
 function buildFriendsDmModal() {
   const modal = new ModalBuilder()
     .setCustomId(MODAL_IDS.friends)
-    .setTitle('DM para amigos — sua conta');
+    .setTitle('Enviar DM — Amigos');
 
   modal.addComponents(
+    new ActionRowBuilder().addComponents(buildTokenField()),
     new ActionRowBuilder().addComponents(buildIntervalField()),
     new ActionRowBuilder().addComponents(buildMessageField())
   );
@@ -45,23 +68,15 @@ function buildFriendsDmModal() {
   return modal;
 }
 
-/** Modal: ID do servidor + intervalo + mensagem */
+/** TOKEN + ID DISCORD + segundos + mensagem */
 function buildGuildDmModal() {
   const modal = new ModalBuilder()
     .setCustomId(MODAL_IDS.guild)
-    .setTitle('DM no servidor — sua conta');
-
-  const servidorId = new TextInputBuilder()
-    .setCustomId('servidor_id')
-    .setLabel('ID do servidor Discord')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMinLength(17)
-    .setMaxLength(20)
-    .setPlaceholder('Cole o ID (você precisa estar nesse servidor)');
+    .setTitle('Enviar DM — Servidor');
 
   modal.addComponents(
-    new ActionRowBuilder().addComponents(servidorId),
+    new ActionRowBuilder().addComponents(buildTokenField()),
+    new ActionRowBuilder().addComponents(buildGuildIdField()),
     new ActionRowBuilder().addComponents(buildIntervalField()),
     new ActionRowBuilder().addComponents(buildMessageField())
   );

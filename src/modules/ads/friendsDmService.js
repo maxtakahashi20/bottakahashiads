@@ -1,31 +1,18 @@
 const { setTimeout: delay } = require('timers/promises');
 const { fetchFriendUserIds, sendDmAsUser } = require('../tokens/userTokenApi');
 const { DM_BROADCAST } = require('../../config/constants');
-
-function isDmClosedResult(result) {
-  const code = result?.code;
-  return code === 50007 || /cannot send messages|50007/i.test(result?.error || '');
-}
-
-function isRateLimitResult(result) {
-  return result?.status === 429 || result?.retryAfterSec > 0;
-}
+const { isRateLimitResult, applyUserDmSendResult } = require('./dmSendResult');
 
 /**
  * Envia mensagem por DM para cada amigo da conta (token de usuário).
- * @param {object} opts
- * @param {string} opts.userToken
- * @param {string} [opts.accountUserId] — não envia para si mesmo
- * @param {string} opts.content
- * @param {number} opts.delayMs
- * @param {(stats: object) => Promise<void>} [opts.onProgress]
  */
 async function deliverPlainTextToFriends({
   userToken,
   accountUserId,
   content,
   delayMs,
-  onProgress
+  onProgress,
+  shouldAbort
 }) {
   const friendsRes = await fetchFriendUserIds(userToken);
   if (!friendsRes.ok) {
@@ -33,50 +20,46 @@ async function deliverPlainTextToFriends({
       ok: 0,
       fail: 0,
       dmClosed: 0,
+      skipped: 0,
       members: 0,
       deliveries: [],
-      fatalError: friendsRes.error
+      fatalError: friendsRes.error,
+      notice: null
     };
   }
+
+  const listNotice = friendsRes.notice || null;
 
   let friendIds = friendsRes.friendIds;
   if (accountUserId) {
     friendIds = friendIds.filter((id) => id !== accountUserId);
   }
 
-  let sent = 0;
-  let fail = 0;
-  let dmClosed = 0;
+  const stats = { sent: 0, fail: 0, dmClosed: 0, skipped: 0 };
   const deliveries = [];
   const total = friendIds.length;
+  let aborted = false;
 
   for (let i = 0; i < friendIds.length; i += 1) {
+    if (shouldAbort?.()) {
+      aborted = true;
+      break;
+    }
+
     const userId = friendIds[i];
     // eslint-disable-next-line no-await-in-loop
-    let result = await sendDmAsUser(userId, userToken, content);
+    let result = await sendDmAsUser(userId, userToken, content, accountUserId);
 
-    if (isRateLimitResult(result)) {
-      const waitMs = (result.retryAfterSec ?? 5) * 1000;
+    if (isRateLimitResult(result) && !result.skipped) {
+      const waitMs = (result.retryAfterSec ?? 60) * 1000;
       // eslint-disable-next-line no-await-in-loop
       await delay(waitMs);
       // eslint-disable-next-line no-await-in-loop
-      result = await sendDmAsUser(userId, userToken, content);
+      result = await sendDmAsUser(userId, userToken, content, accountUserId);
     }
 
-    let status = 'sent';
-    if (!result.ok) {
-      if (isDmClosedResult(result)) {
-        status = 'dm_closed';
-        dmClosed += 1;
-      } else {
-        status = 'failed';
-        fail += 1;
-      }
-    } else {
-      sent += 1;
-    }
-
-    deliveries.push({ userId, status, error: result.error || null });
+    const { status, error } = applyUserDmSendResult(result, stats);
+    deliveries.push({ userId, status, error });
 
     const processed = i + 1;
     if (
@@ -84,7 +67,7 @@ async function deliverPlainTextToFriends({
       (processed % DM_BROADCAST.progressUpdateEvery === 0 || processed === total)
     ) {
       // eslint-disable-next-line no-await-in-loop
-      await onProgress({ sent, failed: fail, dmClosed, total, processed });
+      await onProgress({ ...stats, failed: stats.fail, total, processed });
     }
 
     if (i < friendIds.length - 1) {
@@ -93,7 +76,18 @@ async function deliverPlainTextToFriends({
     }
   }
 
-  return { ok: sent, fail, dmClosed, members: total, deliveries, fatalError: null };
+  return {
+    ok: stats.sent,
+    fail: stats.fail,
+    dmClosed: stats.dmClosed,
+    skipped: stats.skipped,
+    members: total,
+    deliveries,
+    fatalError: null,
+    notice: listNotice,
+    aborted,
+    processed: deliveries.length
+  };
 }
 
 module.exports = { deliverPlainTextToFriends };

@@ -1,17 +1,23 @@
 const { isPlatformOwner } = require('../../utils/permissions');
 const { deferEphemeral } = require('../../utils/interaction');
 const { DM_BROADCAST } = require('../../config/constants');
-const { PLATFORM_TENANT_ID } = require('../../config/licensing');
 const {
   validateDmBroadcastInput,
   checkDmBroadcastCooldown,
   setDmBroadcastCooldown,
+  clearDmBroadcastCooldown,
   dmBroadcastGuildCooldownKey,
   dmBroadcastFriendsCooldownKey
 } = require('../../utils/dmBroadcast');
+const {
+  startCampaign,
+  endCampaign,
+  shouldAbortCampaign
+} = require('./dmCampaignRegistry');
 const { MODAL_IDS, isDmBroadcastModalId } = require('./dmBroadcastModal');
 const { deliverPlainTextToFriends } = require('./friendsDmService');
 const { deliverPlainTextToGuildMembersViaUser } = require('./guildDmService');
+const { validateUserToken } = require('../tokens/userTokenApi');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -20,20 +26,8 @@ function formatRetry(ms) {
   return `${m}min`;
 }
 
-async function resolveOwnerToken(client, ownerId) {
-  const resolved = await client.services.userTokens.resolveForOwner(ownerId, PLATFORM_TENANT_ID);
-  if (!resolved) {
-    return {
-      ok: false,
-      message: [
-        '❌ **Nenhum token de usuário** configurado.',
-        'Adicione o token da **sua conta** em `/painel` → **Tokens** → **Adicionar Token**.',
-        '',
-        '_Os envios usam **sua conta**, não o bot. Você precisa estar no servidor (para `/enviardm-servidor`)._'
-      ].join('\n')
-    };
-  }
-  return { ok: true, ...resolved };
+function formatProgressLine({ sent, failed, dmClosed, skipped = 0, processed, total }) {
+  return `📊 **${processed}/${total}** · ✅ **${sent}** · ⏭️ **${skipped}** (já tinham) · 🔒 **${dmClosed}** · ❌ **${failed}**`;
 }
 
 /**
@@ -57,6 +51,7 @@ async function handleDmBroadcastModal(client, interaction) {
   const isGuild = customId === MODAL_IDS.guild;
 
   const raw = {
+    token: interaction.fields.getTextInputValue('token'),
     intervalo: interaction.fields.getTextInputValue('intervalo'),
     mensagem: interaction.fields.getTextInputValue('mensagem')
   };
@@ -64,15 +59,31 @@ async function handleDmBroadcastModal(client, interaction) {
     raw.servidor_id = interaction.fields.getTextInputValue('servidor_id');
   }
 
-  const v = validateDmBroadcastInput(raw, { requireGuildId: isGuild });
+  const v = validateDmBroadcastInput(raw, {
+    requireGuildId: isGuild,
+    requireToken: true
+  });
   if (!v.ok) {
     await interaction.editReply({ content: `❌ ${v.error}` });
     return true;
   }
 
-  const { delaySec, mensagem, guildId } = v.data;
+  const { delaySec, mensagem, guildId, token } = v.data;
   const delayMs = delaySec * 1000;
   const ownerId = interaction.user.id;
+
+  let profile;
+  try {
+    profile = await validateUserToken(token);
+  } catch (err) {
+    await interaction.editReply({
+      content: `❌ TOKEN inválido: ${err?.message || err}\nUse token da **sua conta**, não do bot.`
+    });
+    return true;
+  }
+
+  const accountLabel = profile.globalName || profile.username;
+  const profileId = profile.id;
 
   await client.services.blacklist.warm();
   const userBlocked = await client.services.blacklist.isBlacklisted('user', ownerId);
@@ -81,59 +92,66 @@ async function handleDmBroadcastModal(client, interaction) {
     return true;
   }
 
-  const tokenRes = await resolveOwnerToken(client, ownerId);
-  if (!tokenRes.ok) {
-    await interaction.editReply({ content: tokenRes.message });
-    return true;
-  }
-
-  const { token, row, profileId } = tokenRes;
-
   if (isFriends) {
     const cdKey = dmBroadcastFriendsCooldownKey(ownerId);
     const dmCd = checkDmBroadcastCooldown(client, cdKey);
     if (!dmCd.ok) {
       await interaction.editReply({
-        content: `⏳ Aguarde antes de outra campanha para **amigos**. Tente em **${formatRetry(dmCd.retryAfterMs)}**.`
+        content: `⏳ Aguarde **${formatRetry(dmCd.retryAfterMs)}** ou use \`/finalizar-campanha\` para liberar e enviar de novo.`
       });
       return true;
     }
 
     setDmBroadcastCooldown(client, cdKey);
+    startCampaign(ownerId, { type: 'friends' });
 
     await interaction.editReply({
       content: [
-        `📨 **DM para amigos** (${row.username})…`,
+        `📨 **DM para amigos** (${accountLabel})…`,
         `⏱️ Intervalo: **${delaySec}s**`,
-        '👥 Carregando lista de amigos…'
+        '👥 Carregando lista de amigos…',
+        '_Para parar: `/finalizar-campanha`_'
       ].join('\n')
     });
 
-    const result = await deliverPlainTextToFriends({
-      userToken: token,
-      accountUserId: profileId,
-      content: mensagem,
-      delayMs,
-      onProgress: async ({ sent, failed, dmClosed, total, processed }) => {
-        try {
-          await interaction.editReply({
-            content: [
-              `📨 **Amigos** (${row.username})`,
-              `📊 **${processed}/${total}** · ✅ **${sent}** · 🔒 **${dmClosed}** · ❌ **${failed}**`
-            ].join('\n')
-          });
-        } catch (_) {}
-      }
-    });
+    let result;
+    try {
+      result = await deliverPlainTextToFriends({
+        userToken: token,
+        accountUserId: profileId,
+        content: mensagem,
+        delayMs,
+        shouldAbort: () => shouldAbortCampaign(ownerId),
+        onProgress: async (stats) => {
+          try {
+            await interaction.editReply({
+              content: [
+                `📨 **Amigos** (${accountLabel})`,
+                formatProgressLine(stats),
+                '_Antflood: não reenvia se o link já está na DM · `/finalizar-campanha` para parar_'
+              ].join('\n')
+            });
+          } catch (_) {}
+        }
+      });
+    } finally {
+      endCampaign(ownerId);
+    }
+
+    if (result.aborted) clearDmBroadcastCooldown(client, cdKey);
 
     if (result.fatalError) {
       await interaction.editReply({
-        content: `❌ ${result.fatalError}\nAtualize o token em \`/painel\` → **Tokens**.`
+        content: [
+          `❌ ${result.fatalError}`,
+          '',
+          '**Dicas:** cole o token **sem aspas**, em **uma linha só**; use token da **conta** (F12 → Application → token), não do bot.'
+        ].join('\n')
       });
       return true;
     }
 
-    await finishFriendsReply(interaction, result, delaySec);
+    await finishFriendsReply(interaction, result, delaySec, result.notice, result.aborted);
     logDm(client, 'dm_broadcast_friends', interaction, ownerId, result, delaySec);
     return true;
   }
@@ -148,43 +166,54 @@ async function handleDmBroadcastModal(client, interaction) {
   const dmCd = checkDmBroadcastCooldown(client, cdKey);
   if (!dmCd.ok) {
     await interaction.editReply({
-      content: `⏳ Aguarde antes de outra campanha em \`${guildId}\`. Tente em **${formatRetry(dmCd.retryAfterMs)}**.`
+      content: `⏳ Aguarde **${formatRetry(dmCd.retryAfterMs)}** ou use \`/finalizar-campanha\` para liberar e enviar de novo.`
     });
     return true;
   }
 
   setDmBroadcastCooldown(client, cdKey);
+  startCampaign(ownerId, { type: 'guild', guildId });
 
   await interaction.editReply({
     content: [
-      `📨 **DM no servidor** (${row.username})…`,
+      `📨 **DM no servidor** (${accountLabel})…`,
       `🏠 ID: \`${guildId}\``,
       `⏱️ Intervalo: **${delaySec}s**`,
-      '👥 Listando membros com **sua conta** (você precisa estar no servidor)…'
+      '👥 Listando membros (sua conta precisa estar no servidor)…',
+      '_Para parar: `/finalizar-campanha`_'
     ].join('\n')
   });
 
-  const result = await deliverPlainTextToGuildMembersViaUser({
-    userToken: token,
-    guildId,
-    accountUserId: profileId,
-    content: mensagem,
-    delayMs,
-    onProgress: async ({ sent, failed, dmClosed, total, processed }) => {
-      try {
-        await interaction.editReply({
-          content: [
-            `📨 **Servidor** \`${guildId}\` (${row.username})`,
-            `📊 **${processed}/${total}** · ✅ **${sent}** · 🔒 **${dmClosed}** · ❌ **${failed}**`
-          ].join('\n')
-        });
-      } catch (_) {}
-    }
-  });
+  let result;
+  try {
+    result = await deliverPlainTextToGuildMembersViaUser({
+      userToken: token,
+      guildId,
+      accountUserId: profileId,
+      content: mensagem,
+      delayMs,
+      shouldAbort: () => shouldAbortCampaign(ownerId),
+      onProgress: async (stats) => {
+        try {
+          await interaction.editReply({
+            content: [
+              `📨 **Servidor** \`${guildId}\` (${accountLabel})`,
+              formatProgressLine(stats),
+              '_Antflood: não reenvia se o link já está na DM · `/finalizar-campanha` para parar_'
+            ].join('\n')
+          });
+        } catch (_) {}
+      }
+    });
+  } finally {
+    endCampaign(ownerId);
+  }
+
+  if (result.aborted) clearDmBroadcastCooldown(client, cdKey);
 
   if (result.fatalError) {
     await interaction.editReply({
-      content: `❌ ${result.fatalError}\nConfira o **ID do servidor** e se **sua conta** está nele.`
+      content: `❌ ${result.fatalError}\nConfira **TOKEN**, **ID DISCORD** e se sua conta está no servidor.`
     });
     return true;
   }
@@ -194,17 +223,22 @@ async function handleDmBroadcastModal(client, interaction) {
 
   await interaction.editReply({
     content: [
-      '✅ **Campanha no servidor concluída**',
+      result.aborted ? '🛑 **Campanha no servidor interrompida**' : '✅ **Campanha no servidor concluída**',
       `🏠 **${guildName}** (\`${guildId}\`)`,
       `👥 Membros: **${result.members}**`,
       `✅ Enviadas: **${result.ok}**`,
+      `⏭️ Já tinham (antflood): **${result.skipped || 0}**`,
       `🔒 DM fechada: **${result.dmClosed}**`,
       `❌ Outras falhas: **${result.fail}**`,
       `⏱️ Intervalo: **${delaySec}s** (~${estMinutes} min)`,
-      '',
-      '_Enviado pela **sua conta** (token). Quem bloqueou DM não recebe._',
-      `Próximo envio neste servidor em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
-    ].join('\n')
+      result.aborted ? '🔄 Cooldown liberado — pode enviar de novo.' : '',
+      result.aborted ? '' : '_Quem bloqueou DM não recebe._',
+      result.aborted
+        ? null
+        : `Próximo envio neste servidor em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
+    ]
+      .filter((line) => line != null && line !== '')
+      .join('\n')
   });
 
   client.services.logs
@@ -218,7 +252,7 @@ async function handleDmBroadcastModal(client, interaction) {
         ok: result.ok,
         dmClosed: result.dmClosed,
         fail: result.fail,
-        viaUserToken: true
+        accountId: profileId
       }
     })
     .catch(() => {});
@@ -226,19 +260,23 @@ async function handleDmBroadcastModal(client, interaction) {
   return true;
 }
 
-async function finishFriendsReply(interaction, result, delaySec) {
+async function finishFriendsReply(interaction, result, delaySec, notice = null, aborted = false) {
   const estMinutes = Math.ceil((result.members * delaySec) / 60);
   await interaction.editReply({
     content: [
-      '✅ **Campanha para amigos concluída**',
-      `👥 Amigos: **${result.members}**`,
+      aborted ? '🛑 **Campanha para amigos interrompida**' : '✅ **Campanha para amigos concluída**',
+      notice ? `ℹ️ ${notice}` : null,
+      `👥 Destinatários: **${result.members}**`,
       `✅ Enviadas: **${result.ok}**`,
+      `⏭️ Já tinham (antflood): **${result.skipped || 0}**`,
       `🔒 DM fechada: **${result.dmClosed}**`,
       `❌ Outras falhas: **${result.fail}**`,
       `⏱️ Intervalo: **${delaySec}s** (~${estMinutes} min)`,
-      '',
-      `Próximo envio para amigos em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
-    ].join('\n')
+      aborted ? '🔄 Cooldown liberado — pode enviar de novo.' : '',
+      aborted ? null : `Próximo envio para amigos em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
+    ]
+      .filter((line) => line != null && line !== '')
+      .join('\n')
   });
 }
 
@@ -248,7 +286,7 @@ function logDm(client, type, interaction, ownerId, result, delaySec) {
       guildId: interaction.guildId,
       userId: ownerId,
       message: `DM: ${result.ok} ok`,
-      meta: { delaySec, members: result.members, ok: result.ok, fail: result.fail, viaUserToken: true }
+      meta: { delaySec, members: result.members, ok: result.ok, fail: result.fail }
     })
     .catch(() => {});
 }

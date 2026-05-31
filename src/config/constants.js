@@ -36,15 +36,17 @@ const SECURITY = {
 const DM_BROADCAST = {
   messageMin: 1,
   messageMax: 4000,
-  /** Mínimo absoluto entre cada DM (rate limit Discord) */
-  delayMinSec: 2,
-  /** Máximo configurável no modal */
-  delayMaxSec: 120,
-  /** Recomendado no placeholder — reduz risco de 429/ban */
-  delayRecommendedSec: 3,
-  /** Cooldown entre campanhas de DM no mesmo servidor */
-  guildCooldownSec: 3600,
-  progressUpdateEvery: 25
+  /** Mínimo entre cada DM — conta recuperada: evitar desativação */
+  delayMinSec: 45,
+  /** Máximo configurável no modal (10 min) */
+  delayMaxSec: 600,
+  /** Padrão seguro: ~1 minuto entre cada pessoa */
+  delayRecommendedSec: 60,
+  /** Cooldown entre campanhas completas */
+  guildCooldownSec: 7200,
+  progressUpdateEvery: 10,
+  /** Pausa extra após checar histórico (antiflood) */
+  antifloodCheckDelayMs: 400
 };
 
 module.exports = { BRAND, LIMITS, SECURITY, DIVULGATION, DM_BROADCAST };

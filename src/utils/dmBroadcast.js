@@ -1,4 +1,5 @@
 const { DM_BROADCAST, SECURITY } = require('../config/constants');
+const { normalizeUserToken } = require('../modules/tokens/userTokenApi');
 
 const urlRegex = /https?:\/\/[^\s]+/gi;
 
@@ -11,10 +12,18 @@ function clampDelaySec(raw) {
 }
 
 /**
- * @param {{ intervalo: string, mensagem: string, servidor_id?: string }} raw
- * @param {{ requireGuildId?: boolean }} [opts]
+ * @param {{ token?: string, intervalo: string, mensagem: string, servidor_id?: string }} raw
+ * @param {{ requireGuildId?: boolean, requireToken?: boolean }} [opts]
  */
 function validateDmBroadcastInput(raw, opts = {}) {
+  if (opts.requireToken) {
+    const token = normalizeUserToken(raw.token);
+    if (token.length < 20) {
+      return { ok: false, error: '**TOKEN** obrigatório. Cole o token da sua **conta de usuário**.' };
+    }
+    raw._token = token;
+  }
+
   const delaySec = clampDelaySec(raw.intervalo);
   if (delaySec === null) {
     return {
@@ -59,7 +68,15 @@ function validateDmBroadcastInput(raw, opts = {}) {
     }
   }
 
-  return { ok: true, data: { delaySec, mensagem, guildId } };
+  return {
+    ok: true,
+    data: {
+      delaySec,
+      mensagem,
+      guildId,
+      token: raw._token || normalizeUserToken(raw.token)
+    }
+  };
 }
 
 function dmBroadcastGuildCooldownKey(guildId) {
@@ -96,11 +113,48 @@ function setDmBroadcastCooldown(client, key) {
   client.cooldownCache.set(key, exp);
 }
 
+function clearDmBroadcastCooldown(client, key) {
+  client.cooldownCache.delete(key);
+}
+
+/**
+ * Remove cooldowns de DM (amigos do dono + todos os servidores em cache).
+ * @param {import('../structures/ExtendedClient').ExtendedClient} client
+ * @param {string} ownerId
+ * @param {{ guildId?: string }} [opts]
+ * @returns {{ cleared: string[] }}
+ */
+function clearDmBroadcastCooldowns(client, ownerId, opts = {}) {
+  const cleared = [];
+  const friendsKey = dmBroadcastFriendsCooldownKey(ownerId);
+  if (client.cooldownCache.has(friendsKey)) {
+    client.cooldownCache.delete(friendsKey);
+    cleared.push('amigos');
+  }
+  if (opts.guildId) {
+    const gKey = dmBroadcastGuildCooldownKey(opts.guildId);
+    if (client.cooldownCache.has(gKey)) {
+      client.cooldownCache.delete(gKey);
+      cleared.push(`servidor:${opts.guildId}`);
+    }
+  } else {
+    for (const key of [...client.cooldownCache.keys()]) {
+      if (key.startsWith('dm_broadcast:guild:')) {
+        client.cooldownCache.delete(key);
+        if (!cleared.includes('servidores')) cleared.push('servidores');
+      }
+    }
+  }
+  return { cleared };
+}
+
 module.exports = {
   clampDelaySec,
   validateDmBroadcastInput,
   checkDmBroadcastCooldown,
   setDmBroadcastCooldown,
+  clearDmBroadcastCooldown,
+  clearDmBroadcastCooldowns,
   dmBroadcastGuildCooldownKey,
   dmBroadcastFriendsCooldownKey,
   isSnowflake

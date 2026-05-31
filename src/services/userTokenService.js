@@ -3,6 +3,7 @@ const { encrypt, decrypt } = require('../utils/tokenCrypto');
 const {
   validateUserToken,
   sendChannelMessageAsUser,
+  shouldSkipChannelDuplicate,
   validateUserChannelAccess
 } = require('../modules/tokens/userTokenApi');
 const { maskSecret } = require('../modules/panel/panelFormat');
@@ -303,6 +304,11 @@ class UserTokenService {
   }
 
   async _sendWithToken(channelId, token, payload, row) {
+    const dup = await shouldSkipChannelDuplicate(channelId, token, row.discordUserId, payload);
+    if (dup.skip) {
+      return { ok: true, skipped: true, via: 'user', reason: dup.reason || 'antiflood' };
+    }
+
     let result = await sendChannelMessageAsUser(channelId, token, payload);
 
     if (!result.ok && result.status === 429 && result.retryAfterSec) {

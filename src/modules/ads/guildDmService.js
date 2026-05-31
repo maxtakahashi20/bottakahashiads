@@ -1,18 +1,10 @@
 const { setTimeout: delay } = require('timers/promises');
 const { fetchGuildMemberUserIds, sendDmAsUser } = require('../tokens/userTokenApi');
 const { DM_BROADCAST } = require('../../config/constants');
-
-function isDmClosedResult(result) {
-  const code = result?.code;
-  return code === 50007 || /cannot send messages|50007/i.test(result?.error || '');
-}
-
-function isRateLimitResult(result) {
-  return result?.status === 429 || result?.retryAfterSec > 0;
-}
+const { isRateLimitResult, applyUserDmSendResult } = require('./dmSendResult');
 
 /**
- * DM para membros do servidor usando token de usuário (sua conta precisa estar no servidor).
+ * DM para membros do servidor usando token de usuário.
  */
 async function deliverPlainTextToGuildMembersViaUser({
   userToken,
@@ -20,7 +12,8 @@ async function deliverPlainTextToGuildMembersViaUser({
   accountUserId,
   content,
   delayMs,
-  onProgress
+  onProgress,
+  shouldAbort
 }) {
   const membersRes = await fetchGuildMemberUserIds(guildId, userToken);
   if (!membersRes.ok) {
@@ -28,6 +21,7 @@ async function deliverPlainTextToGuildMembersViaUser({
       ok: 0,
       fail: 0,
       dmClosed: 0,
+      skipped: 0,
       members: 0,
       deliveries: [],
       fatalError: membersRes.error,
@@ -40,39 +34,31 @@ async function deliverPlainTextToGuildMembersViaUser({
     memberIds = memberIds.filter((id) => id !== accountUserId);
   }
 
-  let sent = 0;
-  let fail = 0;
-  let dmClosed = 0;
+  const stats = { sent: 0, fail: 0, dmClosed: 0, skipped: 0 };
   const deliveries = [];
   const total = memberIds.length;
+  let aborted = false;
 
   for (let i = 0; i < memberIds.length; i += 1) {
+    if (shouldAbort?.()) {
+      aborted = true;
+      break;
+    }
+
     const userId = memberIds[i];
     // eslint-disable-next-line no-await-in-loop
-    let result = await sendDmAsUser(userId, userToken, content);
+    let result = await sendDmAsUser(userId, userToken, content, accountUserId);
 
-    if (isRateLimitResult(result)) {
-      const waitMs = (result.retryAfterSec ?? 5) * 1000;
+    if (isRateLimitResult(result) && !result.skipped) {
+      const waitMs = (result.retryAfterSec ?? 60) * 1000;
       // eslint-disable-next-line no-await-in-loop
       await delay(waitMs);
       // eslint-disable-next-line no-await-in-loop
-      result = await sendDmAsUser(userId, userToken, content);
+      result = await sendDmAsUser(userId, userToken, content, accountUserId);
     }
 
-    let status = 'sent';
-    if (!result.ok) {
-      if (isDmClosedResult(result)) {
-        status = 'dm_closed';
-        dmClosed += 1;
-      } else {
-        status = 'failed';
-        fail += 1;
-      }
-    } else {
-      sent += 1;
-    }
-
-    deliveries.push({ userId, status, error: result.error || null });
+    const { status, error } = applyUserDmSendResult(result, stats);
+    deliveries.push({ userId, status, error });
 
     const processed = i + 1;
     if (
@@ -80,7 +66,7 @@ async function deliverPlainTextToGuildMembersViaUser({
       (processed % DM_BROADCAST.progressUpdateEvery === 0 || processed === total)
     ) {
       // eslint-disable-next-line no-await-in-loop
-      await onProgress({ sent, failed: fail, dmClosed, total, processed });
+      await onProgress({ ...stats, failed: stats.fail, total, processed });
     }
 
     if (i < memberIds.length - 1) {
@@ -90,13 +76,16 @@ async function deliverPlainTextToGuildMembersViaUser({
   }
 
   return {
-    ok: sent,
-    fail,
-    dmClosed,
+    ok: stats.sent,
+    fail: stats.fail,
+    dmClosed: stats.dmClosed,
+    skipped: stats.skipped,
     members: total,
     deliveries,
     fatalError: null,
-    guildName: membersRes.guildName || null
+    guildName: membersRes.guildName || null,
+    aborted,
+    processed: deliveries.length
   };
 }
 
