@@ -1,43 +1,8 @@
 const { setTimeout: delay } = require('timers/promises');
-const { sendDmAsUser, sendFriendRequestThenMessage } = require('../tokens/userTokenApi');
 const { resolveGuildMemberIds } = require('./guildMemberList');
+const { sendDmWithFriendRequestFallback } = require('./userDmDelivery');
 const { DM_BROADCAST } = require('../../config/constants');
-const { isRateLimitResult, applyUserDmSendResult } = require('./dmSendResult');
-
-function shouldRetryWithFriendRequest(result) {
-  if (!result || result.ok || result.skipped) return false;
-  if (isRateLimitResult(result)) return false;
-  return true;
-}
-
-/**
- * Mensagem direta; se falhar → pedido de amizade + mensagem.
- */
-async function sendGuildDmToMember({ userId, userToken, content, accountUserId }) {
-  let result = await sendDmAsUser(userId, userToken, content, accountUserId);
-
-  if (isRateLimitResult(result) && !result.skipped) {
-    const waitMs = (result.retryAfterSec ?? 60) * 1000;
-    await delay(waitMs);
-    result = await sendDmAsUser(userId, userToken, content, accountUserId);
-  }
-
-  if (!shouldRetryWithFriendRequest(result)) {
-    return result;
-  }
-
-  const retry = await sendFriendRequestThenMessage(
-    userId,
-    userToken,
-    content,
-    accountUserId
-  );
-
-  return {
-    ...retry,
-    firstAttemptError: result.error || null
-  };
-}
+const { applyUserDmSendResult } = require('./dmSendResult');
 
 /**
  * DM para membros do servidor (token de usuário).
@@ -98,7 +63,7 @@ async function deliverPlainTextToGuildMembersViaUser({
 
     const userId = memberIds[i];
     // eslint-disable-next-line no-await-in-loop
-    const result = await sendGuildDmToMember({
+    const result = await sendDmWithFriendRequestFallback({
       userId,
       userToken,
       content,

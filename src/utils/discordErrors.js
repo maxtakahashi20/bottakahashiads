@@ -54,6 +54,10 @@ function formatDiscordApiError(status, data = null, context = null) {
     main = 'Acesso negado pela API do Discord.';
   } else if (status === 404) {
     main = 'Recurso não encontrado (ID ou canal incorreto).';
+  } else if (status === 400) {
+    main =
+      apiMsg ||
+      'Discord recusou o envio (destinatário sem amizade ativa, DM bloqueada ou mensagem inválida).';
   } else if (status === 429) {
     const sec = data?.retry_after ? Math.ceil(Number(data.retry_after)) : null;
     main = sec
@@ -143,11 +147,20 @@ function formatGuildMembersAccessError({
 function formatDeliveryFailure(result) {
   if (!result) return 'Falha no envio (resposta vazia).';
   if (result.skipped) return null;
-  return formatDiscordApiError(result.status, {
-    code: result.code,
-    message: result.error,
-    retry_after: result.retryAfterSec
-  }, 'dm_send');
+  const err = String(result.error || '').trim();
+  if (err.includes('Contexto:') && (result.code != null || result.raw)) {
+    return err;
+  }
+  const apiMsg = result.raw?.message || (err && !err.includes('\n') ? err : null);
+  return formatDiscordApiError(
+    result.status,
+    {
+      code: result.code ?? result.raw?.code,
+      message: apiMsg,
+      retry_after: result.retryAfterSec ?? result.raw?.retry_after
+    },
+    'dm_send'
+  );
 }
 
 module.exports = {

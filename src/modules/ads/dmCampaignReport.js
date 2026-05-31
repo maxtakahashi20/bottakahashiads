@@ -11,7 +11,7 @@ const STATUS_REASON = {
 
 function reasonForDelivery(d) {
   if (d.usedFriendFallback && d.status === 'sent') {
-    return 'Mensagem direta falhou; entregue após pedido de amizade + mensagem.';
+    return 'Primeira tentativa falhou; entregue após pedido de amizade + mensagem.';
   }
   if (d.status === 'skipped' && d.error === 'link_ja_enviado') {
     return 'Não reenviado: o link já existia na conversa.';
@@ -55,14 +55,19 @@ function buildCampaignReport(opts) {
     '',
     '**Resumo**',
     `👥 Total na lista: **${result.members ?? 0}**`,
-    `✅ Entregues: **${result.ok ?? 0}**`,
-    type === 'guild' && (result.friendRequestRetries ?? 0) > 0
+    `✅ Entregues agora: **${result.ok ?? 0}**`,
+    (result.skipped ?? 0) > 0
+      ? `📋 Já tinham sua mensagem/link (antflood, não reenviado): **${result.skipped}**`
+      : null,
+    (result.ok ?? 0) + (result.skipped ?? 0) > 0
+      ? `📊 Alcance nesta campanha: **${(result.ok ?? 0) + (result.skipped ?? 0)}** de **${result.members ?? 0}**`
+      : null,
+    (result.friendRequestRetries ?? 0) > 0
       ? `🔄 Etapa extra (pedido de amizade + mensagem): **${result.friendRequestRetries}**`
       : null,
-    type === 'guild' && (result.friendRequestsSent ?? 0) > 0
+    (result.friendRequestsSent ?? 0) > 0
       ? `👋 Pedidos de amizade enviados: **${result.friendRequestsSent}**`
       : null,
-    `⏭️ Pulados (antflood): **${result.skipped ?? 0}**`,
     `🔒 DM fechada: **${result.dmClosed ?? 0}**`,
     `❌ Falhas: **${result.fail ?? 0}**`,
     `⏱️ Intervalo usado: **${delaySec}s**`
