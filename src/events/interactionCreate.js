@@ -23,6 +23,7 @@ const {
   handleDmBroadcastModal,
   isDmBroadcastModal
 } = require('../modules/ads/dmBroadcastHandlers');
+const { formatCaughtError, userFacingError } = require('../utils/discordErrors');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -411,19 +412,20 @@ module.exports = {
           });
       }
     } catch (err) {
-      client.logger.error({ err }, 'interactionCreate error');
+      client.logger.error(
+        { err, customId: interaction.customId, command: interaction.commandName },
+        'interactionCreate error'
+      );
       if (interaction.isRepliable()) {
+        const ctx = isDmBroadcastModal(interaction.customId) ? 'modal' : 'modal';
+        const text = userFacingError(formatCaughtError(err, ctx), {
+          title: 'Falha ao processar o comando'
+        });
         try {
           if (interaction.deferred || interaction.replied) {
-            await interaction.editReply({
-              content: 'Ocorreu um erro ao processar sua ação. Tente novamente.',
-              embeds: [],
-              components: []
-            });
+            await interaction.editReply({ content: text, embeds: [], components: [] });
           } else {
-            await safeReply(interaction, {
-              content: 'Ocorreu um erro ao processar sua ação. Tente novamente.'
-            });
+            await safeReply(interaction, { content: text });
           }
         } catch (_) {}
       }

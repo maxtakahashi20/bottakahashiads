@@ -19,6 +19,7 @@ const { deliverPlainTextToFriends } = require('./friendsDmService');
 const { deliverPlainTextToGuildMembersViaUser } = require('./guildDmService');
 const { validateUserToken } = require('../tokens/userTokenApi');
 const { buildCampaignReport, sendCampaignReportDm } = require('./dmCampaignReport');
+const { formatCaughtError, userFacingError } = require('../../utils/discordErrors');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -43,7 +44,10 @@ async function handleDmBroadcastModal(client, interaction) {
 
   if (!isPlatformOwner(interaction)) {
     await interaction.editReply({
-      content: '🔒 Apenas quem está em **`BOT_OWNER_IDS`** pode usar este comando.'
+      content: userFacingError(
+        'Comando restrito ao identificador configurado em BOT_OWNER_IDS no ambiente do bot.',
+        { title: 'Acesso negado' }
+      )
     });
     return true;
   }
@@ -65,7 +69,9 @@ async function handleDmBroadcastModal(client, interaction) {
     requireToken: true
   });
   if (!v.ok) {
-    await interaction.editReply({ content: `❌ ${v.error}` });
+    await interaction.editReply({
+      content: userFacingError(v.error, { title: 'Dados do formulário inválidos' })
+    });
     return true;
   }
 
@@ -78,7 +84,9 @@ async function handleDmBroadcastModal(client, interaction) {
     profile = await validateUserToken(token);
   } catch (err) {
     await interaction.editReply({
-      content: `❌ TOKEN inválido: ${err?.message || err}\nUse token da **sua conta**, não do bot.`
+      content: userFacingError(formatCaughtError(err, 'token_validate'), {
+        title: 'TOKEN recusado'
+      })
     });
     return true;
   }
@@ -89,7 +97,12 @@ async function handleDmBroadcastModal(client, interaction) {
   await client.services.blacklist.warm();
   const userBlocked = await client.services.blacklist.isBlacklisted('user', ownerId);
   if (userBlocked) {
-    await interaction.editReply({ content: 'Você está bloqueado de usar esta função.' });
+    await interaction.editReply({
+      content: userFacingError(
+        'Seu usuário consta na lista de bloqueio da plataforma.',
+        { title: 'Operação bloqueada' }
+      )
+    });
     return true;
   }
 
@@ -98,7 +111,10 @@ async function handleDmBroadcastModal(client, interaction) {
     const dmCd = checkDmBroadcastCooldown(client, cdKey);
     if (!dmCd.ok) {
       await interaction.editReply({
-        content: `⏳ Aguarde **${formatRetry(dmCd.retryAfterMs)}** ou use \`/finalizar-campanha\` para liberar e enviar de novo.`
+        content: userFacingError(
+          `Campanha para amigos em intervalo de espera (${formatRetry(dmCd.retryAfterMs)} restantes). Utilize /finalizar-campanha para liberar antes do prazo.`,
+          { title: 'Cooldown ativo' }
+        )
       });
       return true;
     }
@@ -155,13 +171,11 @@ async function handleDmBroadcastModal(client, interaction) {
     if (result.fatalError) {
       await interaction.editReply({
         content: [
-          `❌ ${result.fatalError}`,
-          '',
-          '**Dicas:** cole o token **sem aspas**, em **uma linha só**; use token da **conta** (F12 → Application → token), não do bot.',
+          userFacingError(result.fatalError, { title: 'Campanha não iniciada' }),
           reportDm.ok
-            ? '📬 **Relatório** enviado na sua DM.'
-            : `⚠️ Relatório não foi para DM: ${reportDm.error}`
-        ].join('\n')
+            ? 'Relatório registrado na sua DM.'
+            : userFacingError(reportDm.error, { title: 'Relatório na DM não entregue' })
+        ].join('\n\n')
       });
       return true;
     }
@@ -173,7 +187,11 @@ async function handleDmBroadcastModal(client, interaction) {
 
   const guildBlocked = await client.services.blacklist.isBlacklisted('guild', guildId);
   if (guildBlocked) {
-    await interaction.editReply({ content: 'Este servidor está bloqueado.' });
+    await interaction.editReply({
+      content: userFacingError('O servidor informado está bloqueado na plataforma.', {
+        title: 'Servidor bloqueado'
+      })
+    });
     return true;
   }
 
@@ -181,7 +199,10 @@ async function handleDmBroadcastModal(client, interaction) {
   const dmCd = checkDmBroadcastCooldown(client, cdKey);
   if (!dmCd.ok) {
     await interaction.editReply({
-      content: `⏳ Aguarde **${formatRetry(dmCd.retryAfterMs)}** ou use \`/finalizar-campanha\` para liberar e enviar de novo.`
+      content: userFacingError(
+        `Campanha neste servidor em intervalo de espera (${formatRetry(dmCd.retryAfterMs)} restantes). Utilize /finalizar-campanha para liberar antes do prazo.`,
+        { title: 'Cooldown ativo' }
+      )
     });
     return true;
   }
@@ -241,10 +262,12 @@ async function handleDmBroadcastModal(client, interaction) {
     const errReportDm = await sendCampaignReportDm(client, ownerId, errReport);
     await interaction.editReply({
       content: [
-        `❌ ${result.fatalError}`,
-        'Confira **TOKEN**, **ID DISCORD** e se sua conta está no servidor.',
-        errReportDm.ok ? '📬 **Relatório** enviado na sua DM.' : `⚠️ Relatório DM: ${errReportDm.error}`
-      ].join('\n')
+        userFacingError(result.fatalError, { title: 'Campanha no servidor não concluída' }),
+        'Verifique TOKEN, ID DISCORD e se a conta do token participa do servidor.',
+        errReportDm.ok
+          ? 'Relatório registrado na sua DM.'
+          : userFacingError(errReportDm.error, { title: 'Relatório na DM não entregue' })
+      ].join('\n\n')
     });
     return true;
   }
@@ -278,8 +301,11 @@ async function handleDmBroadcastModal(client, interaction) {
         ? null
         : `Próximo envio neste servidor em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`,
       reportDm.ok
-        ? '📬 **Relatório detalhado** enviado na sua DM.'
-        : `⚠️ Relatório na DM falhou: ${reportDm.error} (ative DM do bot)`
+        ? 'Relatório detalhado enviado na sua DM.'
+        : userFacingError(
+            `${reportDm.error} Ative mensagens diretas do bot Takahashi Ads.`,
+            { title: 'Relatório na DM não entregue' }
+          )
     ]
       .filter((line) => line != null && line !== '')
       .join('\n')
@@ -319,9 +345,12 @@ async function finishFriendsReply(interaction, result, delaySec, notice = null, 
       aborted ? '🔄 Cooldown liberado — pode enviar de novo.' : '',
       aborted ? null : `Próximo envio para amigos em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`,
       reportDm?.ok
-        ? '📬 **Relatório detalhado** enviado na sua DM (entregues, pulados e motivos).'
+        ? 'Relatório detalhado enviado na sua DM (entregues, não entregues e motivos).'
         : reportDm
-          ? `⚠️ Relatório na DM falhou: ${reportDm.error} — permita DM do bot **Takahashi Ads**.`
+          ? userFacingError(
+              `${reportDm.error} Ative mensagens diretas do bot Takahashi Ads.`,
+              { title: 'Relatório na DM não entregue' }
+            )
           : null
     ]
       .filter((line) => line != null && line !== '')

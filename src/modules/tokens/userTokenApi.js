@@ -6,6 +6,7 @@ const {
   buildOutboundFingerprint
 } = require('../../utils/dmAntiflood');
 const { DM_BROADCAST } = require('../../config/constants');
+const { formatDiscordApiError } = require('../../utils/discordErrors');
 
 /** Discord às vezes devolve retry-after absurdo (horas) — limitamos para não travar o bot. */
 const MAX_RETRY_AFTER_SEC = 600;
@@ -88,20 +89,13 @@ async function discordUserFetch(path, userToken, options = {}) {
   return { ok: res.ok, status: res.status, data, retryAfterSec };
 }
 
-function formatApiError(status, data) {
-  const msg = data?.message || `HTTP ${status}`;
-  const code = data?.code ? ` (código ${data.code})` : '';
-  if (data?.code === 50109) {
-    return `Requisição inválida à API do Discord${code}. Cole o TOKEN em **uma linha**, sem aspas nem espaços no meio.`;
-  }
-  if (status === 401) return `Token inválido ou expirado${code}. Gere um novo token.`;
-  if (status === 403) return `Sem permissão no canal${code}: ${msg}`;
-  if (status === 404) return 'Canal não encontrado — confira o ID';
-  if (status === 429) return `Rate limit${code} — aguarde e tente de novo`;
+function formatApiError(status, data, context = null) {
+  const msg = data?.message || '';
   if (data?.code === 200000 || /automod/i.test(msg)) {
-    return `Mensagem bloqueada pelo **AutoMod** do servidor${code}. Ajuste o texto ou peça ao admin para liberar.`;
+    return formatDiscordApiError(status, data, 'channel_send') +
+      '\nAjuste o texto da mensagem ou solicite liberação ao administrador do servidor.';
   }
-  return `${msg}${code}`;
+  return formatDiscordApiError(status, data, context);
 }
 
 /**
@@ -110,10 +104,12 @@ function formatApiError(status, data) {
 async function validateUserToken(rawToken) {
   const { ok, status, data } = await discordUserFetch('/users/@me', rawToken);
   if (!ok) {
-    throw new Error(formatApiError(status, data));
+    throw new Error(formatApiError(status, data, 'token_validate'));
   }
   if (data.bot) {
-    throw new Error('Este é um token de **bot**. Cole o token da sua **conta de usuário**.');
+    throw new Error(
+      'TOKEN informado é de aplicativo (bot). Informe o token da sua conta de usuário no campo TOKEN.'
+    );
   }
   return {
     id: data.id,
@@ -158,7 +154,7 @@ async function sendChannelMessageAsUser(channelId, userToken, payload) {
   if (!ok) {
     return {
       ok: false,
-      error: formatApiError(status, data),
+      error: formatApiError(status, data, 'dm_send'),
       status,
       code: data?.code,
       raw: data,
@@ -191,8 +187,9 @@ async function fetchGuildMemberUserIds(guildId, userToken) {
       ok: false,
       error:
         g.status === 404
-          ? 'Servidor não encontrado. Confira o ID.'
-          : 'Sua conta **não está** neste servidor (ou sem acesso). Entre no Discord e tente de novo.',
+          ? formatDiscordApiError(404, g.data, 'guild_members')
+          : formatDiscordApiError(403, g.data, 'guild_members') +
+            '\nA conta do TOKEN precisa estar no servidor informado.',
       guildName: null
     };
   }
@@ -215,10 +212,7 @@ async function fetchGuildMemberUserIds(guildId, userToken) {
       }
       return {
         ok: false,
-        error:
-          status === 403
-            ? 'Sem permissão para listar membros. Sua conta precisa estar no servidor.'
-            : formatApiError(status, data),
+        error: formatApiError(status, data, 'guild_members'),
         guildName
       };
     }
@@ -252,7 +246,7 @@ async function fetchDmRecipientIds(userToken) {
   if (!ok) {
     return {
       ok: false,
-      error: formatApiError(status, data),
+      error: formatApiError(status, data, 'friends_list'),
       status,
       code: data?.code,
       retryAfterSec
@@ -297,7 +291,7 @@ async function fetchFriendUserIds(userToken) {
     if (!fallback.ok && fallback.error) {
       return {
         ok: false,
-        error: `${formatApiError(status, data)} Alternativa (DMs): ${fallback.error}`,
+        error: `${formatApiError(status, data, 'friends_list')}\nFallback (DMs abertas): ${fallback.error}`,
         status,
         code: data?.code,
         retryAfterSec
@@ -307,7 +301,7 @@ async function fetchFriendUserIds(userToken) {
 
   return {
     ok: false,
-    error: formatApiError(status, data),
+    error: formatApiError(status, data, 'friends_list'),
     status,
     code: data?.code,
     retryAfterSec
@@ -324,7 +318,7 @@ async function openDmChannelAsUser(recipientId, userToken) {
   if (!ok) {
     return {
       ok: false,
-      error: formatApiError(status, data),
+      error: formatApiError(status, data, 'dm_open'),
       status,
       code: data?.code,
       retryAfterSec

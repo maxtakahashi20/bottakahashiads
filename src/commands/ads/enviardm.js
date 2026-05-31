@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { isPlatformOwner } = require('../../utils/permissions');
 const { safeReply } = require('../../utils/interaction');
 const { buildFriendsDmModal } = require('../../modules/ads/dmBroadcastModal');
+const { userFacingError } = require('../../utils/discordErrors');
 
 module.exports = {
   skipCommandLoading: true,
@@ -18,7 +19,10 @@ module.exports = {
   async execute(_client, interaction) {
     if (!isPlatformOwner(interaction)) {
       await safeReply(interaction, {
-        content: '🔒 Apenas quem está em `BOT_OWNER_IDS` pode usar este comando.'
+        content: userFacingError(
+          'Comando restrito ao identificador configurado em BOT_OWNER_IDS.',
+          { title: 'Acesso negado' }
+        )
       });
       return;
     }

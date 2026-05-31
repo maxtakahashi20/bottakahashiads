@@ -6,6 +6,7 @@ const {
   shouldSkipChannelDuplicate,
   validateUserChannelAccess
 } = require('../modules/tokens/userTokenApi');
+const { formatDiscordApiError } = require('../utils/discordErrors');
 const { maskSecret } = require('../modules/panel/panelFormat');
 const { isMissingTableError } = require('../utils/prismaSafe');
 const { PLATFORM_TENANT_ID } = require('../config/licensing');
@@ -344,7 +345,8 @@ class UserTokenService {
 
     const list = await this.listActive(tenantId);
     if (!list.length) {
-      this._lastSendError = 'Nenhum token de usuário ativo — cadastre em /painel → Tokens';
+      this._lastSendError =
+        'Nenhum token de usuário ativo. Cadastre um token em /painel → Tokens antes de divulgar.';
       return { ok: false, error: this._lastSendError, via: 'none' };
     }
 
@@ -375,7 +377,7 @@ class UserTokenService {
 
         if (isAutomodError(result)) {
           const msg =
-            'Mensagem bloqueada pelo **AutoMod** do servidor (ex.: ProBot). Altere o texto em `/painel` → **Mensagem** ou peça ao admin para liberar.';
+            'Mensagem bloqueada pelo AutoMod do servidor. Altere o texto em /painel → Mensagem ou solicite liberação ao administrador.';
           this._blockChannel(channelId, msg, tenantId, 24);
           this._lastSendError = msg;
           this.client.logger.warn({ channelId, code: result.code }, 'Canal bloqueado por AutoMod (24h)');
@@ -419,7 +421,7 @@ class UserTokenService {
       const sec = Math.min(MAX_INLINE_RATE_WAIT_SEC, lastRateLimitSec);
       return {
         ok: false,
-        error: `Rate limit — aguarde ~${sec}s e tente novamente (conta com limite do Discord)`,
+        error: formatDiscordApiError(429, { retry_after: sec, code: 429 }, 'channel_send'),
         via: 'user',
         rateLimited: true,
         retryAfterSec: lastRateLimitSec

@@ -19,7 +19,10 @@ function validateDmBroadcastInput(raw, opts = {}) {
   if (opts.requireToken) {
     const token = normalizeUserToken(raw.token);
     if (token.length < 20) {
-      return { ok: false, error: '**TOKEN** obrigatório. Cole o token da sua **conta de usuário**.' };
+      return {
+        ok: false,
+        error: 'Campo TOKEN obrigatório. Informe o token da conta de usuário (não use token de bot).'
+      };
     }
     raw._token = token;
   }
@@ -28,7 +31,7 @@ function validateDmBroadcastInput(raw, opts = {}) {
   if (delaySec === null) {
     return {
       ok: false,
-      error: `Intervalo inválido. Use entre **${DM_BROADCAST.delayMinSec}** e **${DM_BROADCAST.delayMaxSec}** segundos (recomendado **${DM_BROADCAST.delayRecommendedSec}s+**).`
+      error: `Intervalo inválido. Informe entre ${DM_BROADCAST.delayMinSec} e ${DM_BROADCAST.delayMaxSec} segundos (recomendado: ${DM_BROADCAST.delayRecommendedSec}s).`
     };
   }
 
@@ -38,33 +41,35 @@ function validateDmBroadcastInput(raw, opts = {}) {
     if (!isSnowflake(guildId)) {
       return {
         ok: false,
-        error: '**ID do servidor** inválido. Copie o ID do Discord (17–20 dígitos).'
+        error: 'ID DISCORD inválido. O identificador do servidor deve ter entre 17 e 20 dígitos numéricos.'
       };
     }
   }
 
   const mensagem = String(raw.mensagem || '').trim();
   if (mensagem.length < DM_BROADCAST.messageMin) {
-    return { ok: false, error: 'A mensagem não pode estar vazia.' };
+    return { ok: false, error: 'Campo Mensagem obrigatório.' };
   }
   if (mensagem.length > DM_BROADCAST.messageMax) {
     return {
       ok: false,
-      error: `Mensagem muito longa (máximo ${DM_BROADCAST.messageMax} caracteres).`
+      error: `Mensagem excede o limite de ${DM_BROADCAST.messageMax} caracteres.`
     };
   }
 
   const lower = mensagem.toLowerCase();
   for (const m of SECURITY.blockedMentions) {
     if (lower.includes(m)) {
-      return { ok: false, error: `Menções ${m} não são permitidas.` };
+      return { ok: false, error: `Conteúdo não permitido: menção ${m}.` };
     }
   }
 
   const urls = lower.match(urlRegex) || [];
   for (const u of urls) {
     for (const dom of SECURITY.blockedDomains) {
-      if (u.includes(dom)) return { ok: false, error: 'Link suspeito detectado na mensagem.' };
+      if (u.includes(dom)) {
+        return { ok: false, error: `Link não permitido na mensagem (domínio: ${dom}).` };
+      }
     }
   }
 

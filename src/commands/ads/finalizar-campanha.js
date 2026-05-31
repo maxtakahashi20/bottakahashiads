@@ -6,6 +6,7 @@ const {
   abortCampaign,
   getActiveCampaign
 } = require('../../modules/ads/dmCampaignRegistry');
+const { userFacingError } = require('../../utils/discordErrors');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -39,7 +40,12 @@ module.exports = {
     const guildIdOpt = interaction.options.getString('servidor_id')?.trim() || null;
 
     if (guildIdOpt && !isSnowflake(guildIdOpt)) {
-      await interaction.editReply({ content: '❌ **servidor_id** inválido.' });
+      await interaction.editReply({
+        content: userFacingError(
+          'O parâmetro servidor_id deve conter entre 17 e 20 dígitos numéricos.',
+          { title: 'Parâmetro inválido' }
+        )
+      });
       return;
     }
 

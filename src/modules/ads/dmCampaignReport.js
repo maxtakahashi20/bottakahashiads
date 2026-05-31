@@ -1,21 +1,25 @@
 const { splitDiscordContent } = require('../../utils/discordMessage');
 const { DM_BROADCAST } = require('../../config/constants');
+const { CODE_MESSAGES } = require('../../utils/discordErrors');
 
 const STATUS_REASON = {
-  sent: 'Entregue com sucesso',
-  skipped: 'Já recebeu (link ou mensagem igual — antflood)',
-  dm_closed: 'DM fechada / privada — Discord não permite enviar',
-  failed: 'Falha no envio'
+  sent: 'Mensagem entregue.',
+  skipped: 'Não reenviado: conteúdo ou link já constava na conversa (antiflood).',
+  dm_closed: CODE_MESSAGES[50007] || 'Destinatário com DM desativada.',
+  failed: 'Falha no envio.'
 };
 
 function reasonForDelivery(d) {
   if (d.status === 'skipped' && d.error === 'link_ja_enviado') {
-    return 'Já tinha o **link** na conversa';
+    return 'Não reenviado: o link já existia na conversa.';
   }
   if (d.status === 'skipped' && d.error === 'mensagem_ja_enviada') {
-    return '**Mensagem igual** já enviada antes';
+    return 'Não reenviado: mensagem idêntica já havia sido enviada.';
   }
-  if (d.error && d.status === 'failed') return String(d.error).slice(0, 120);
+  if (d.error && d.status === 'failed') {
+    const err = String(d.error).trim();
+    return err.length > 200 ? `${err.slice(0, 200)}…` : err;
+  }
   return STATUS_REASON[d.status] || d.status;
 }
 
@@ -103,7 +107,7 @@ function buildCampaignReport(opts) {
  */
 async function sendCampaignReportDm(client, discordUserId, contentParts) {
   if (!discordUserId || !contentParts?.length) {
-    return { ok: false, error: 'Relatório vazio' };
+    return { ok: false, error: 'Conteúdo do relatório vazio; nada a enviar.' };
   }
 
   try {
@@ -120,7 +124,13 @@ async function sendCampaignReportDm(client, discordUserId, contentParts) {
     return { ok: true };
   } catch (err) {
     client.logger?.warn({ err, discordUserId }, 'Falha ao enviar relatório por DM');
-    return { ok: false, error: err?.message || 'Não foi possível abrir sua DM' };
+    const code = err?.code;
+    const base = err?.message || 'Não foi possível abrir canal de mensagem direta.';
+    const hint =
+      code === 50007
+        ? ' Ative mensagens diretas do bot Takahashi Ads nas configurações de privacidade.'
+        : '';
+    return { ok: false, error: `${base}${hint}` };
   }
 }
 
