@@ -9,7 +9,7 @@ function isNetworkAdmin(interaction) {
   return interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) === true;
 }
 
-/** Dono da rede (BOT_OWNER_IDS) — tokens de usuário só por ele */
+/** Dono da rede — tokens de usuário só por ele */
 function isTokenOwner(interaction) {
   if (isPlatformOwner(interaction)) return true;
   return isNetworkAdmin(interaction);
@@ -20,4 +20,13 @@ function isPlatformOwner(interaction) {
   return env.inviteOwnerIds.length > 0 && env.inviteOwnerIds.includes(interaction.user.id);
 }
 
-module.exports = { isNetworkAdmin, isTokenOwner, isPlatformOwner };
+/** Texto exibido ao usuário — sem citar variáveis de ambiente */
+const MSG_PLATFORM_ACCESS_DENIED =
+  'Comando restrito ao administrador autorizado da plataforma.';
+
+module.exports = {
+  isNetworkAdmin,
+  isTokenOwner,
+  isPlatformOwner,
+  MSG_PLATFORM_ACCESS_DENIED
+};

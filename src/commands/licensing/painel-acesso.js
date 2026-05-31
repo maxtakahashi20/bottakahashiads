@@ -8,7 +8,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('painel-acesso')
     .setDescription('(Dono) Painel administrativo de licenças e assinaturas.')
-    // Oculta do autocomplete para usuários comuns (ainda validamos BOT_OWNER_IDS em runtime).
+    // Oculta do autocomplete para usuários comuns (validação de dono em runtime).
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .setDMPermission(false),
 
@@ -17,7 +17,7 @@ module.exports = {
       await interaction.editReply({
         content:
           '❌ Apenas o dono da plataforma pode abrir este painel.\n' +
-          'Configure `BOT_OWNER_IDS` na Discloud com seu ID Discord.'
+          'Seu usuário não está autorizado como administrador da plataforma.'
       });
       return;
     }

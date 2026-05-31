@@ -103,7 +103,7 @@ function buildCampaignReport(opts) {
 /**
  * Envia relatório na DM do usuário Discord (via bot).
  * @param {import('../../structures/ExtendedClient').ExtendedClient} client
- * @param {string} discordUserId — quem executou o comando (BOT_OWNER)
+ * @param {string} discordUserId — quem executou o comando
  */
 async function sendCampaignReportDm(client, discordUserId, contentParts) {
   if (!discordUserId || !contentParts?.length) {

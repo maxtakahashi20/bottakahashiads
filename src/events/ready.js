@@ -37,7 +37,7 @@ module.exports = {
     try {
       await client.services.analytics.setConnectedGuilds(client.guilds.cache.size);
     } catch (err) {
-      client.logger.error({ err }, 'Falha ao atualizar analytics (verifique DATABASE_URL / Supabase)');
+      client.logger.error({ err }, 'Falha ao atualizar analytics (conexão com banco de dados)');
     }
 
     await client.services.logs.write('ready', {

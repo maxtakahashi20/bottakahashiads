@@ -36,7 +36,7 @@ async function requireTenantOwner(client, interaction) {
   }
 
   if (ctx.tenant.isPlatform && !ctx.platformOwner) {
-    return { ok: false, error: '❌ Reset da plataforma é só para `BOT_OWNER_IDS`.' };
+    return { ok: false, error: '❌ Reset da plataforma restrito ao administrador autorizado.' };
   }
 
   return {

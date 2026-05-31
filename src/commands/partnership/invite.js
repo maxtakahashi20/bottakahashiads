@@ -73,7 +73,7 @@ module.exports = {
           name: 'Link da loja (recomendado)',
           value: brandedUrl
             ? `[${brandedUrl}](${brandedUrl})`
-            : '_Configure `PUBLIC_BASE_URL` no .env para link personalizado._'
+            : '_Link personalizado indisponível. Contate o suporte da plataforma._'
         },
         {
           name: 'Link direto Discord',

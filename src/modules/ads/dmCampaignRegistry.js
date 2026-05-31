@@ -1,4 +1,4 @@
-/** Campanhas de DM ativas por dono (BOT_OWNER_IDS) */
+/** Campanhas de DM ativas por administrador autorizado */
 const active = new Map();
 
 /**

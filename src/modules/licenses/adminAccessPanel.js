@@ -35,7 +35,7 @@ function buildAdminAccessHome({ stats, recent }) {
         value: lines.length ? lines.join('\n') : '_Nenhuma ainda_'
       }
     )
-    .setFooter({ text: 'Somente dono da plataforma (BOT_OWNER_IDS)' })
+    .setFooter({ text: 'Somente administrador autorizado da plataforma' })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(

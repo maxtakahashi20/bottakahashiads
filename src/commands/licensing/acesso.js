@@ -33,7 +33,7 @@ module.exports = {
       await interaction.editReply({
         content:
           '❌ Apenas o dono da plataforma pode gerar licenças.\n' +
-          'Configure `BOT_OWNER_IDS` com **seu ID Discord** na Discloud e redeploy.'
+          'Seu usuário não está autorizado como administrador da plataforma. Contate o suporte.'
       });
       return;
     }

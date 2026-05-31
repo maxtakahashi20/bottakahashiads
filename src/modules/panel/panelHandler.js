@@ -76,7 +76,7 @@ async function requireAdmin(interaction) {
 async function requireTokenOwner(interaction) {
   if (!isTokenOwner(interaction)) {
     await interaction.reply({
-      content: '❌ Só o dono da rede (`BOT_OWNER_IDS`) pode gerenciar tokens de usuário.',
+      content: '❌ Apenas o administrador autorizado da plataforma pode gerenciar tokens de usuário.',
       flags: EPHEMERAL
     });
     return false;

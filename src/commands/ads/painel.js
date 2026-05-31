@@ -42,7 +42,7 @@ module.exports = {
     await interaction.editReply({
       content:
         '❌ Ative sua licença com `/ativar` (filtre pelo bot **Takahashi Ads** nos comandos).\n' +
-        'Administradores da rede usam o mesmo `/painel` após configurar `BOT_OWNER_IDS`.'
+        'Administradores autorizados da plataforma utilizam o mesmo `/painel`.'
     });
   }
 };

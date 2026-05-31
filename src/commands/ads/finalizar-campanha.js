@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { isPlatformOwner } = require('../../utils/permissions');
+const { isPlatformOwner, MSG_PLATFORM_ACCESS_DENIED } = require('../../utils/permissions');
 const { safeReply, deferEphemeral } = require('../../utils/interaction');
 const { clearDmBroadcastCooldowns, isSnowflake } = require('../../utils/dmBroadcast');
 const {
@@ -11,7 +11,7 @@ const { userFacingError } = require('../../utils/discordErrors');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('finalizar-campanha')
-    .setDescription('[BOT_OWNER_IDS] Para a campanha de DM e libera enviar de novo.')
+    .setDescription('Encerra a campanha de DM e libera novo envio.')
     .setDMPermission(true)
     .addStringOption((opt) =>
       opt
@@ -29,7 +29,7 @@ module.exports = {
   async execute(client, interaction) {
     if (!isPlatformOwner(interaction)) {
       await safeReply(interaction, {
-        content: '🔒 Apenas quem está em `BOT_OWNER_IDS` pode usar este comando.'
+        content: userFacingError(MSG_PLATFORM_ACCESS_DENIED, { title: 'Acesso negado' })
       });
       return;
     }

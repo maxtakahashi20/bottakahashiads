@@ -1,4 +1,4 @@
-const { isPlatformOwner } = require('../../utils/permissions');
+const { isPlatformOwner, MSG_PLATFORM_ACCESS_DENIED } = require('../../utils/permissions');
 const { deferEphemeral } = require('../../utils/interaction');
 const { DM_BROADCAST } = require('../../config/constants');
 const {
@@ -44,10 +44,7 @@ async function handleDmBroadcastModal(client, interaction) {
 
   if (!isPlatformOwner(interaction)) {
     await interaction.editReply({
-      content: userFacingError(
-        'Comando restrito ao identificador configurado em BOT_OWNER_IDS no ambiente do bot.',
-        { title: 'Acesso negado' }
-      )
+      content: userFacingError(MSG_PLATFORM_ACCESS_DENIED, { title: 'Acesso negado' })
     });
     return true;
   }
