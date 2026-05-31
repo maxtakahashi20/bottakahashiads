@@ -106,6 +106,22 @@ class UserTokenService {
     return row;
   }
 
+  /**
+   * Token de usuário do dono (para DM em amigos). Prioriza ownerId = quem executou o comando.
+   * @param {string} ownerId
+   * @param {string} [tenantId]
+   */
+  async resolveForOwner(ownerId, tenantId = PLATFORM_TENANT_ID) {
+    const list = await this.listActive(tenantId);
+    if (!list.length) return null;
+    const row =
+      list.find((t) => t.ownerId === ownerId) ||
+      list.find((t) => t.discordUserId === ownerId) ||
+      list[0];
+    const token = await this.getDecrypted(row);
+    return { row, token, profileId: row.discordUserId };
+  }
+
   async addToken({ rawToken, ownerId, tenantId = PLATFORM_TENANT_ID }) {
     const profile = await validateUserToken(rawToken);
     try {

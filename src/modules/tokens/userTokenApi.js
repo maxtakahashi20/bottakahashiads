@@ -1,4 +1,5 @@
 const DISCORD_API = 'https://discord.com/api/v10';
+const { splitDiscordContent } = require('../../utils/discordMessage');
 
 /** Discord às vezes devolve retry-after absurdo (horas) — limitamos para não travar o bot. */
 const MAX_RETRY_AFTER_SEC = 600;
@@ -121,6 +122,133 @@ async function getGuildAsUser(guildId, userToken) {
   return discordUserFetch(`/guilds/${guildId}`, userToken);
 }
 
+const GUILD_MEMBERS_PAGE = 1000;
+const GUILD_MEMBERS_PAGE_DELAY_MS = 600;
+
+/**
+ * Lista IDs de membros humanos do servidor (conta do token precisa estar no servidor).
+ */
+async function fetchGuildMemberUserIds(guildId, userToken) {
+  const g = await getGuildAsUser(guildId, userToken);
+  let guildName = null;
+  if (g.ok) guildName = g.data?.name || null;
+  else if (g.status === 403 || g.status === 404) {
+    return {
+      ok: false,
+      error:
+        g.status === 404
+          ? 'Servidor não encontrado. Confira o ID.'
+          : 'Sua conta **não está** neste servidor (ou sem acesso). Entre no Discord e tente de novo.',
+      guildName: null
+    };
+  }
+
+  const ids = [];
+  let after = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let path = `/guilds/${guildId}/members?limit=${GUILD_MEMBERS_PAGE}`;
+    if (after) path += `&after=${after}`;
+
+    // eslint-disable-next-line no-await-in-loop
+    const { ok, status, data, retryAfterSec } = await discordUserFetch(path, userToken);
+    if (!ok) {
+      if (status === 429 && retryAfterSec) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, retryAfterSec * 1000));
+        continue;
+      }
+      return {
+        ok: false,
+        error:
+          status === 403
+            ? 'Sem permissão para listar membros. Sua conta precisa estar no servidor.'
+            : formatApiError(status, data),
+        guildName
+      };
+    }
+
+    const chunk = Array.isArray(data) ? data : [];
+    for (const m of chunk) {
+      if (m?.user?.bot) continue;
+      if (m?.user?.id) ids.push(String(m.user.id));
+    }
+
+    if (chunk.length < GUILD_MEMBERS_PAGE) break;
+    after = chunk[chunk.length - 1]?.user?.id;
+    if (!after) break;
+
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, GUILD_MEMBERS_PAGE_DELAY_MS));
+  }
+
+  return { ok: true, memberIds: [...new Set(ids)], guildName };
+}
+
+/**
+ * Lista IDs de amigos (relationship type 1) da conta do token.
+ * @returns {Promise<string[]>}
+ */
+async function fetchFriendUserIds(userToken) {
+  const { ok, status, data, retryAfterSec } = await discordUserFetch(
+    '/users/@me/relationships',
+    userToken
+  );
+  if (!ok) {
+    return {
+      ok: false,
+      error: formatApiError(status, data),
+      status,
+      code: data?.code,
+      retryAfterSec
+    };
+  }
+  const list = Array.isArray(data) ? data : [];
+  const ids = list
+    .filter((r) => r?.type === 1 && r?.id)
+    .map((r) => String(r.id));
+  return { ok: true, friendIds: [...new Set(ids)] };
+}
+
+async function openDmChannelAsUser(recipientId, userToken) {
+  const { ok, status, data, retryAfterSec } = await discordUserFetch('/users/@me/channels', userToken, {
+    method: 'POST',
+    body: JSON.stringify({ recipient_id: recipientId })
+  });
+  if (!ok) {
+    return {
+      ok: false,
+      error: formatApiError(status, data),
+      status,
+      code: data?.code,
+      retryAfterSec
+    };
+  }
+  return { ok: true, channelId: data.id };
+}
+
+async function sendChannelMessageChunks(channelId, userToken, contentParts) {
+  let lastMessageId = null;
+  for (const part of contentParts) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await sendChannelMessageAsUser(channelId, userToken, { content: part });
+    if (!result.ok) return result;
+    lastMessageId = result.messageId;
+  }
+  return { ok: true, messageId: lastMessageId };
+}
+
+/**
+ * Envia DM usando token de usuário (conta pessoal).
+ */
+async function sendDmAsUser(recipientId, userToken, content) {
+  const open = await openDmChannelAsUser(recipientId, userToken);
+  if (!open.ok) return open;
+  const parts = splitDiscordContent(content);
+  return sendChannelMessageChunks(open.channelId, userToken, parts);
+}
+
 async function validateUserChannelAccess(channelId, guildId, userToken) {
   const ch = await getChannelAsUser(channelId, userToken);
   if (!ch.ok) {
@@ -145,6 +273,10 @@ async function validateUserChannelAccess(channelId, guildId, userToken) {
 module.exports = {
   validateUserToken,
   sendChannelMessageAsUser,
+  fetchFriendUserIds,
+  fetchGuildMemberUserIds,
+  openDmChannelAsUser,
+  sendDmAsUser,
   getChannelAsUser,
   getGuildAsUser,
   validateUserChannelAccess,

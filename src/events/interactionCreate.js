@@ -19,6 +19,10 @@ const { handleAdminAccessButton } = require('../modules/licenses/adminPanelHandl
 const { handleResetInteraction } = require('../modules/reset/resetHandler');
 const { isResetButton } = require('../modules/reset/resetIds');
 const { nextSendDate } = require('../utils/divulgationLimits');
+const {
+  handleDmBroadcastModal,
+  isDmBroadcastModal
+} = require('../modules/ads/dmBroadcastHandlers');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -240,6 +244,10 @@ module.exports = {
 
         await interaction.editReply({ content: '✅ Categorias atualizadas.' });
         return;
+      }
+
+      if (interaction.isModalSubmit() && isDmBroadcastModal(interaction.customId)) {
+        if (await handleDmBroadcastModal(client, interaction)) return;
       }
 
       if (interaction.isModalSubmit() && interaction.customId === 'ads:announce:modal') {

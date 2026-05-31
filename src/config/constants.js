@@ -32,5 +32,20 @@ const SECURITY = {
   ]
 };
 
-module.exports = { BRAND, LIMITS, SECURITY, DIVULGATION };
+/** Divulgação por DM — /enviardm (amigos) e /enviardm-servidor */
+const DM_BROADCAST = {
+  messageMin: 1,
+  messageMax: 4000,
+  /** Mínimo absoluto entre cada DM (rate limit Discord) */
+  delayMinSec: 2,
+  /** Máximo configurável no modal */
+  delayMaxSec: 120,
+  /** Recomendado no placeholder — reduz risco de 429/ban */
+  delayRecommendedSec: 3,
+  /** Cooldown entre campanhas de DM no mesmo servidor */
+  guildCooldownSec: 3600,
+  progressUpdateEvery: 25
+};
+
+module.exports = { BRAND, LIMITS, SECURITY, DIVULGATION, DM_BROADCAST };
 
