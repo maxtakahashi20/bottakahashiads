@@ -18,6 +18,7 @@ const { MODAL_IDS, isDmBroadcastModalId } = require('./dmBroadcastModal');
 const { deliverPlainTextToFriends } = require('./friendsDmService');
 const { deliverPlainTextToGuildMembersViaUser } = require('./guildDmService');
 const { validateUserToken } = require('../tokens/userTokenApi');
+const { buildCampaignReport, sendCampaignReportDm } = require('./dmCampaignReport');
 
 function formatRetry(ms) {
   const s = Math.ceil(ms / 1000);
@@ -140,18 +141,32 @@ async function handleDmBroadcastModal(client, interaction) {
 
     if (result.aborted) clearDmBroadcastCooldown(client, cdKey);
 
+    const reportParts = buildCampaignReport({
+      type: 'friends',
+      result,
+      accountLabel,
+      delaySec,
+      aborted: result.aborted,
+      fatalError: result.fatalError,
+      notice: result.notice
+    });
+    const reportDm = await sendCampaignReportDm(client, ownerId, reportParts);
+
     if (result.fatalError) {
       await interaction.editReply({
         content: [
           `❌ ${result.fatalError}`,
           '',
-          '**Dicas:** cole o token **sem aspas**, em **uma linha só**; use token da **conta** (F12 → Application → token), não do bot.'
+          '**Dicas:** cole o token **sem aspas**, em **uma linha só**; use token da **conta** (F12 → Application → token), não do bot.',
+          reportDm.ok
+            ? '📬 **Relatório** enviado na sua DM.'
+            : `⚠️ Relatório não foi para DM: ${reportDm.error}`
         ].join('\n')
       });
       return true;
     }
 
-    await finishFriendsReply(interaction, result, delaySec, result.notice, result.aborted);
+    await finishFriendsReply(interaction, result, delaySec, result.notice, result.aborted, reportDm);
     logDm(client, 'dm_broadcast_friends', interaction, ownerId, result, delaySec);
     return true;
   }
@@ -211,15 +226,41 @@ async function handleDmBroadcastModal(client, interaction) {
 
   if (result.aborted) clearDmBroadcastCooldown(client, cdKey);
 
+  const guildName = result.guildName || guildId;
+
   if (result.fatalError) {
+    const errReport = buildCampaignReport({
+      type: 'guild',
+      result,
+      accountLabel,
+      delaySec,
+      fatalError: result.fatalError,
+      guildId,
+      guildName
+    });
+    const errReportDm = await sendCampaignReportDm(client, ownerId, errReport);
     await interaction.editReply({
-      content: `❌ ${result.fatalError}\nConfira **TOKEN**, **ID DISCORD** e se sua conta está no servidor.`
+      content: [
+        `❌ ${result.fatalError}`,
+        'Confira **TOKEN**, **ID DISCORD** e se sua conta está no servidor.',
+        errReportDm.ok ? '📬 **Relatório** enviado na sua DM.' : `⚠️ Relatório DM: ${errReportDm.error}`
+      ].join('\n')
     });
     return true;
   }
 
-  const guildName = result.guildName || guildId;
   const estMinutes = Math.ceil((result.members * delaySec) / 60);
+
+  const reportParts = buildCampaignReport({
+    type: 'guild',
+    result,
+    accountLabel,
+    delaySec,
+    aborted: result.aborted,
+    guildId,
+    guildName
+  });
+  const reportDm = await sendCampaignReportDm(client, ownerId, reportParts);
 
   await interaction.editReply({
     content: [
@@ -235,7 +276,10 @@ async function handleDmBroadcastModal(client, interaction) {
       result.aborted ? '' : '_Quem bloqueou DM não recebe._',
       result.aborted
         ? null
-        : `Próximo envio neste servidor em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
+        : `Próximo envio neste servidor em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`,
+      reportDm.ok
+        ? '📬 **Relatório detalhado** enviado na sua DM.'
+        : `⚠️ Relatório na DM falhou: ${reportDm.error} (ative DM do bot)`
     ]
       .filter((line) => line != null && line !== '')
       .join('\n')
@@ -260,7 +304,7 @@ async function handleDmBroadcastModal(client, interaction) {
   return true;
 }
 
-async function finishFriendsReply(interaction, result, delaySec, notice = null, aborted = false) {
+async function finishFriendsReply(interaction, result, delaySec, notice = null, aborted = false, reportDm = null) {
   const estMinutes = Math.ceil((result.members * delaySec) / 60);
   await interaction.editReply({
     content: [
@@ -273,7 +317,12 @@ async function finishFriendsReply(interaction, result, delaySec, notice = null, 
       `❌ Outras falhas: **${result.fail}**`,
       `⏱️ Intervalo: **${delaySec}s** (~${estMinutes} min)`,
       aborted ? '🔄 Cooldown liberado — pode enviar de novo.' : '',
-      aborted ? null : `Próximo envio para amigos em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`
+      aborted ? null : `Próximo envio para amigos em **${Math.round(DM_BROADCAST.guildCooldownSec / 60)} min**.`,
+      reportDm?.ok
+        ? '📬 **Relatório detalhado** enviado na sua DM (entregues, pulados e motivos).'
+        : reportDm
+          ? `⚠️ Relatório na DM falhou: ${reportDm.error} — permita DM do bot **Takahashi Ads**.`
+          : null
     ]
       .filter((line) => line != null && line !== '')
       .join('\n')

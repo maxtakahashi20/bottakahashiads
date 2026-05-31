@@ -59,7 +59,8 @@ async function deliverPlainTextToFriends({
     }
 
     const { status, error } = applyUserDmSendResult(result, stats);
-    deliveries.push({ userId, status, error });
+    const detailError = result.skipped ? result.reason || error : error;
+    deliveries.push({ userId, status, error: detailError });
 
     const processed = i + 1;
     if (
