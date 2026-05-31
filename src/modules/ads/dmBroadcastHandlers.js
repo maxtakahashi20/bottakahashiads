@@ -212,7 +212,7 @@ async function handleDmBroadcastModal(client, interaction) {
       `📨 **DM no servidor** (${accountLabel})…`,
       `🏠 ID: \`${guildId}\``,
       `⏱️ Intervalo: **${delaySec}s**`,
-      '👥 Listando membros (sua conta precisa estar no servidor)…',
+      '👥 Listando membros (mensagem direta; se falhar → pedido de amizade + mensagem)…',
       '_Para parar: `/finalizar-campanha`_'
     ].join('\n')
   });
@@ -220,6 +220,7 @@ async function handleDmBroadcastModal(client, interaction) {
   let result;
   try {
     result = await deliverPlainTextToGuildMembersViaUser({
+      client,
       userToken: token,
       guildId,
       accountUserId: profileId,
@@ -232,7 +233,7 @@ async function handleDmBroadcastModal(client, interaction) {
             content: [
               `📨 **Servidor** \`${guildId}\` (${accountLabel})`,
               formatProgressLine(stats),
-              '_Antflood: não reenvia se o link já está na DM · `/finalizar-campanha` para parar_'
+              '_Mensagem direta; se falhar → pedido de amizade + mensagem · `/finalizar-campanha` para parar_'
             ].join('\n')
           });
         } catch (_) {}
@@ -277,6 +278,7 @@ async function handleDmBroadcastModal(client, interaction) {
     accountLabel,
     delaySec,
     aborted: result.aborted,
+    notice: result.notice,
     guildId,
     guildName
   });
@@ -288,6 +290,9 @@ async function handleDmBroadcastModal(client, interaction) {
       `🏠 **${guildName}** (\`${guildId}\`)`,
       `👥 Membros: **${result.members}**`,
       `✅ Enviadas: **${result.ok}**`,
+      result.friendRequestRetries
+        ? `🔄 Etapa extra (amizade + msg): **${result.friendRequestRetries}**`
+        : null,
       `⏭️ Já tinham (antflood): **${result.skipped || 0}**`,
       `🔒 DM fechada: **${result.dmClosed}**`,
       `❌ Outras falhas: **${result.fail}**`,

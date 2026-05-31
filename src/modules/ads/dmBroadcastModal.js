@@ -25,7 +25,7 @@ function buildGuildIdField() {
     .setRequired(true)
     .setMinLength(17)
     .setMaxLength(20)
-    .setPlaceholder('ID do servidor (sua conta precisa estar nele)');
+    .setPlaceholder('Copiar ID do servidor (ícone do servidor — não é ID de canal)');
 }
 
 function buildIntervalField() {

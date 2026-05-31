@@ -46,7 +46,9 @@ const DM_BROADCAST = {
   guildCooldownSec: 7200,
   progressUpdateEvery: 10,
   /** Pausa extra após checar histórico (antiflood) */
-  antifloodCheckDelayMs: 400
+  antifloodCheckDelayMs: 400,
+  /** Pausa após pedido de amizade, antes da mensagem (etapa extra DM servidor) */
+  friendRequestBeforeMessageDelayMs: 2500
 };
 
 module.exports = { BRAND, LIMITS, SECURITY, DIVULGATION, DM_BROADCAST };

@@ -234,6 +234,82 @@ async function fetchGuildMemberUserIds(guildId, userToken) {
   return { ok: true, memberIds: [...new Set(ids)], guildName };
 }
 
+const USER_GUILDS_PAGE = 200;
+const CHANNEL_MEMBER_SCAN_MAX = 12;
+const CHANNEL_MEMBER_MESSAGES = 100;
+const CHANNEL_SCAN_DELAY_MS = 350;
+
+/**
+ * Servidores em que a conta do TOKEN está (validação antes da campanha).
+ */
+async function fetchUserGuilds(userToken) {
+  const guilds = [];
+  let before = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let path = `/users/@me/guilds?limit=${USER_GUILDS_PAGE}`;
+    if (before) path += `&before=${before}`;
+
+    // eslint-disable-next-line no-await-in-loop
+    const { ok, status, data } = await discordUserFetch(path, userToken);
+    if (!ok) {
+      return { ok: false, error: formatApiError(status, data, 'guild_members') };
+    }
+
+    const chunk = Array.isArray(data) ? data : [];
+    for (const g of chunk) {
+      if (g?.id) guilds.push({ id: String(g.id), name: g.name || g.id });
+    }
+
+    if (chunk.length < USER_GUILDS_PAGE) break;
+    before = chunk[chunk.length - 1]?.id;
+    if (!before) break;
+
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return { ok: true, guilds };
+}
+
+/**
+ * Fallback: IDs de autores/menções em mensagens recentes (lista parcial).
+ */
+async function fetchMemberIdsFromGuildChannels(guildId, userToken) {
+  const { ok, status, data } = await discordUserFetch(`/guilds/${guildId}/channels`, userToken);
+  if (!ok) {
+    return { ok: false, error: formatApiError(status, data, 'guild_members') };
+  }
+
+  const textChannels = (Array.isArray(data) ? data : [])
+    .filter((ch) => ch?.type === 0)
+    .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
+    .slice(0, CHANNEL_MEMBER_SCAN_MAX);
+
+  const ids = new Set();
+
+  for (const ch of textChannels) {
+    // eslint-disable-next-line no-await-in-loop
+    const msgRes = await discordUserFetch(
+      `/channels/${ch.id}/messages?limit=${CHANNEL_MEMBER_MESSAGES}`,
+      userToken
+    );
+    if (msgRes.ok && Array.isArray(msgRes.data)) {
+      for (const msg of msgRes.data) {
+        if (msg?.author?.id && !msg.author.bot) ids.add(String(msg.author.id));
+        for (const m of msg.mentions || []) {
+          if (m?.id && !m.bot) ids.add(String(m.id));
+        }
+      }
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, CHANNEL_SCAN_DELAY_MS));
+  }
+
+  return { ok: true, memberIds: [...ids] };
+}
+
 /**
  * Lista IDs de amigos (relationship type 1) da conta do token.
  * @returns {Promise<string[]>}
@@ -305,6 +381,67 @@ async function fetchFriendUserIds(userToken) {
     status,
     code: data?.code,
     retryAfterSec
+  };
+}
+
+function friendRequestAlreadyExists(data) {
+  const msg = String(data?.message || '').toLowerCase();
+  return /already|friends|pending|relationship/i.test(msg);
+}
+
+/**
+ * Envia pedido de amizade (conta do TOKEN) — PUT /users/@me/relationships/{user.id}
+ */
+async function sendFriendRequestAsUser(userId, userToken) {
+  const targetId = String(userId || '').trim();
+  const { ok, status, data, retryAfterSec } = await discordUserFetch(
+    `/users/@me/relationships/${targetId}`,
+    userToken,
+    { method: 'PUT', body: '{}' }
+  );
+
+  if (ok || status === 204) {
+    return { ok: true, friendRequestSent: true, status, code: data?.code, retryAfterSec };
+  }
+
+  if (friendRequestAlreadyExists(data)) {
+    return {
+      ok: true,
+      friendRequestSent: false,
+      alreadyRelated: true,
+      status,
+      code: data?.code,
+      retryAfterSec
+    };
+  }
+
+  return {
+    ok: false,
+    friendRequestSent: false,
+    error: formatApiError(status, data, 'friend_request'),
+    status,
+    code: data?.code,
+    retryAfterSec
+  };
+}
+
+/**
+ * Etapa extra: pedido de amizade e, em seguida, a mensagem no privado.
+ */
+async function sendFriendRequestThenMessage(recipientId, userToken, content, accountUserId = null) {
+  const fr = await sendFriendRequestAsUser(recipientId, userToken);
+  if (!fr.ok) {
+    return { ...fr, skipped: false, usedFriendFallback: true };
+  }
+
+  await new Promise((r) => setTimeout(r, DM_BROADCAST.friendRequestBeforeMessageDelayMs));
+
+  const dm = await sendDmAsUser(recipientId, userToken, content, accountUserId);
+  return {
+    ...dm,
+    friendRequestSent: !!fr.friendRequestSent,
+    alreadyRelated: !!fr.alreadyRelated,
+    usedFriendFallback: true
   };
 }
 
@@ -404,7 +541,11 @@ module.exports = {
   validateUserToken,
   sendChannelMessageAsUser,
   fetchFriendUserIds,
+  fetchUserGuilds,
   fetchGuildMemberUserIds,
+  fetchMemberIdsFromGuildChannels,
+  sendFriendRequestAsUser,
+  sendFriendRequestThenMessage,
   openDmChannelAsUser,
   fetchChannelMessagesAsUser,
   sendDmAsUser,

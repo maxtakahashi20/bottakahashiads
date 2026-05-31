@@ -25,6 +25,7 @@ const CONTEXT_HINTS = {
   token_validate: 'Validação do TOKEN no modal.',
   friends_list: 'Listagem de amigos da conta.',
   guild_members: 'Listagem de membros do servidor.',
+  friend_request: 'Pedido de amizade para o usuário.',
   dm_open: 'Abertura do canal de mensagem direta.',
   dm_send: 'Envio da mensagem direta.',
   channel_send: 'Envio no canal de divulgação.',
@@ -108,6 +109,35 @@ function userFacingError(text, { title = 'Não foi possível concluir' } = {}) {
 }
 
 /**
+ * Erro ao montar lista de membros (conta no servidor ≠ API liberada).
+ */
+function formatGuildMembersAccessError({
+  membersDenied = false,
+  guildName = null,
+  botInGuild = false,
+  botAttempted = false
+} = {}) {
+  const lines = [
+    membersDenied
+      ? '**Estar no servidor não basta:** o Discord bloqueia a listagem completa de membros com TOKEN de **conta** (erro 50001).'
+      : 'Não foi possível montar a lista de destinatários para este servidor.',
+    guildName ? `Servidor: **${guildName}**.` : null,
+    '',
+    '**O que fazer:**',
+    '1. Confira o **ID do servidor** (ícone do servidor → Copiar ID do servidor — não use ID de canal).',
+    botAttempted && !botInGuild
+      ? '2. **Convide o bot Takahashi** para o servidor (com permissão de ver membros) — a lista virá pelo bot e as DMs continuam pela sua conta no modal.'
+      : null,
+    botAttempted && botInGuild
+      ? '2. O bot está no servidor, mas não conseguiu carregar membros (ative **Server Members Intent** no Developer Portal do bot).'
+      : null,
+    '3. Sem o bot, só é possível lista **parcial** (quem apareceu em mensagens nos canais visíveis).'
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
+/**
  * @param {object} result retorno de sendDmAsUser / API
  */
 function formatDeliveryFailure(result) {
@@ -125,5 +155,6 @@ module.exports = {
   formatDiscordApiError,
   formatCaughtError,
   formatDeliveryFailure,
+  formatGuildMembersAccessError,
   userFacingError
 };
